@@ -6,7 +6,10 @@
 // because they constrain everything after them.
 package prompt
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // stagingRules apply to every agent and skill. The working directory is the git
 // worktree whose commits the harness pushes on exit, so ephemeral files left
@@ -38,6 +41,9 @@ type Layers struct {
 	Skill string
 	// StageTask is the task for this stage.
 	StageTask string
+	// Params are the run's inputs (KONVEYOR_PARAM_*), rendered so the agent can
+	// act on values the task text refers to (e.g. a JIRA URL).
+	Params map[string]string
 }
 
 // Build composes the stage prompt. The harness's environment rules always come
@@ -51,6 +57,24 @@ func Build(l Layers) string {
 	if l.AgentPrompt != "" {
 		b.WriteString(l.AgentPrompt)
 		b.WriteString("\n\n")
+	}
+
+	if len(l.Params) > 0 {
+		b.WriteString("## Parameters\n\n")
+		b.WriteString("Inputs provided for this run:\n\n")
+		keys := make([]string, 0, len(l.Params))
+		for k := range l.Params {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			b.WriteString("- ")
+			b.WriteString(k)
+			b.WriteString(": ")
+			b.WriteString(l.Params[k])
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
 	}
 
 	if l.WorkflowGuide != "" {

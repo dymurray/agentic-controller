@@ -35,6 +35,9 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run a single migration stage (plan, execute, or verify)",
 	RunE:  runStage,
+	// A stage failure is a runtime error, not a usage error — don't print the
+	// command's usage text after it (it only obscures the real error).
+	SilenceUsage: true,
 }
 
 func init() {
@@ -47,7 +50,7 @@ func main() {
 	}
 }
 
-func runStage(cmd *cobra.Command, args []string) error {
+func runStage(cmd *cobra.Command, args []string) (err error) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -178,6 +181,15 @@ func runStage(cmd *cobra.Command, args []string) error {
 	}
 	defer srv.Stop()
 
+	// On any failure after goose starts, dump goose's full captured output.
+	// The ACP layer only surfaces an opaque JSON-RPC error (e.g. -32603
+	// "Internal error"); goose's own logs carry the real cause.
+	defer func() {
+		if err != nil {
+			dumpGooseLogs(srv)
+		}
+	}()
+
 	// 6. Connect ACP, create session
 	wsClient, err := acp.WaitReadyDial(ctx, "127.0.0.1", srv.Port(), srv.SecretKey(), 30*time.Second)
 	if err != nil {
@@ -272,6 +284,7 @@ func runStage(cmd *cobra.Command, args []string) error {
 		WorkflowGuide: cfg.WorkflowGuide,
 		Skill:         skillContent,
 		StageTask:     cfg.StageInstructions,
+		Params:        cfg.Params,
 	})
 
 	// 8. Start filesystem watcher BEFORE blocking prompt
@@ -309,6 +322,7 @@ func runStage(cmd *cobra.Command, args []string) error {
 	if cancelled {
 		logging.Warn("run cancelled by an attached viewer")
 	}
+	logPromptResult(promptResult)
 	if err != nil {
 		logging.Err("prompt failed: %v", err)
 	}
@@ -329,8 +343,14 @@ func runStage(cmd *cobra.Command, args []string) error {
 	// 12. Stop watcher before final push
 	w.Stop()
 
-	// 13. Determine exit status from ACP/goose signals
-	stageFailed := err != nil || !srv.Alive() || cancelled
+	// 13. Determine exit status. A cancelled run (viewer abort) or a turn that
+	// made no tool calls (nothing changed on disk) both count as failure, so a
+	// no-op stage stops reporting success.
+	noWork := err == nil && !cancelled && promptResult != nil && promptResult.ToolCalls == 0
+	if noWork {
+		logging.Err("agent made no tool calls — no work performed")
+	}
+	stageFailed := err != nil || !srv.Alive() || cancelled || noWork
 
 	// 14. Final push (use a fresh context — the signal context may
 	// already be cancelled after SIGINT)
@@ -359,6 +379,52 @@ func runStage(cmd *cobra.Command, args []string) error {
 	emitNotice("stage succeeded — results pushed to branch %s", creds.Branch)
 	logging.Ok("stage succeeded")
 	return nil
+}
+
+// dumpGooseLogs writes goose serve's full captured stdout/stderr to stderr,
+// verbatim, under a clear header. Called on stage failure so the operator sees
+// the real cause (LLM provider/model/credentials, tool crash, panic, …) in one
+// place instead of hunting through interleaved output or an opaque ACP error.
+// Written raw (not through the structured logger) to preserve goose's own
+// formatting.
+func dumpGooseLogs(srv *goose.ServeProcess) {
+	out := srv.Output()
+	logging.Header("Goose Logs (dumped on failure)")
+	if len(out) == 0 {
+		logging.Warn("no goose output was captured")
+		return
+	}
+	if _, werr := os.Stderr.Write(out); werr != nil {
+		logging.Warn("failed to dump goose logs: %v", werr)
+		return
+	}
+	if out[len(out)-1] != '\n' {
+		os.Stderr.Write([]byte("\n"))
+	}
+	logging.Info("--- end goose logs (%d bytes) ---", len(out))
+}
+
+// logPromptResult surfaces what the turn actually did: why it stopped, how many
+// tool calls it made, token usage, and the agent's final message. Without this,
+// a turn that made zero tool calls (the model just replied with text) looks
+// identical to real work — the stage still reports "succeeded".
+func logPromptResult(r *acp.PromptResult) {
+	if r == nil {
+		return
+	}
+	logging.Info("turn: stopReason=%q toolCalls=%d", r.StopReason, r.ToolCalls)
+	if r.Usage != nil {
+		logging.Info("tokens: input=%d output=%d total=%d", r.Usage.InputTokens, r.Usage.OutputTokens, r.Usage.TotalTokens)
+	}
+	msg := strings.TrimSpace(strings.Join(r.Chunks, ""))
+	if msg == "" {
+		return
+	}
+	const maxLen = 4000
+	if len(msg) > maxLen {
+		msg = msg[:maxLen] + "\n… (truncated)"
+	}
+	logging.Info("agent message:\n%s", msg)
 }
 
 const defaultSkillsDir = "/opt/skills"

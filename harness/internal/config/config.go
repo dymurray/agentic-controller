@@ -52,6 +52,11 @@ type Config struct {
 	AgentPrompt       string
 	WorkflowGuide     string
 	StageInstructions string
+
+	// Params are the run's KONVEYOR_PARAM_* values (minus harness controls),
+	// surfaced to the agent in the prompt so it can act on run inputs like a
+	// JIRA URL, ticket id, target version, etc.
+	Params map[string]string
 }
 
 func LoadFromEnv() (*Config, error) {
@@ -88,6 +93,7 @@ func LoadFromEnv() (*Config, error) {
 		AgentPrompt:       os.Getenv("KONVEYOR_PROMPT"),
 		WorkflowGuide:     workflowGuideFromEnv(),
 		StageInstructions: os.Getenv("KONVEYOR_INSTRUCTIONS"),
+		Params:            paramsFromEnv(),
 	}
 
 	if n, err := strconv.Atoi(os.Getenv("KONVEYOR_PARAM_MAX_TURNS")); err == nil && n > 0 {
@@ -119,6 +125,30 @@ func envSwitchedOff(name string) bool {
 		return true
 	}
 	return false
+}
+
+// paramsFromEnv collects the run's KONVEYOR_PARAM_* values so they can be shown
+// to the agent. The prefix is stripped (KONVEYOR_PARAM_JIRA_URL -> JIRA_URL).
+// MAX_TURNS is excluded — it is a harness control, not agent input. These are
+// non-secret run inputs; secrets belong in envFrom/secretRef, not params.
+func paramsFromEnv() map[string]string {
+	const prefix = "KONVEYOR_PARAM_"
+	params := map[string]string{}
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, prefix) {
+			continue
+		}
+		name, value, ok := strings.Cut(e, "=")
+		if !ok {
+			continue
+		}
+		name = strings.TrimPrefix(name, prefix)
+		if name == "" || name == "MAX_TURNS" {
+			continue
+		}
+		params[name] = value
+	}
+	return params
 }
 
 // workflowGuideFromEnv reads the workflow guide the controller injects.

@@ -209,6 +209,7 @@ type PromptResult struct {
 	StopReason string       `json:"stopReason"`
 	Usage      *PromptUsage `json:"usage,omitempty"`
 	Chunks     []string     `json:"-"`
+	ToolCalls  int          `json:"-"`
 }
 
 type PromptUsage struct {
@@ -254,6 +255,7 @@ func (c *SessionClient) SendPrompt(ctx context.Context, sessionID string, conten
 			handlePromptNotification(msg, result)
 			if maxTurns > 0 && turnCount >= maxTurns {
 				logging.Warn("max turns reached (%d), terminating", maxTurns)
+				result.ToolCalls = turnCount
 				return result, fmt.Errorf("max turns reached (%d)", maxTurns)
 			}
 		case msg := <-respCh:
@@ -264,11 +266,18 @@ func (c *SessionClient) SendPrompt(ctx context.Context, sessionID string, conten
 				handlePromptNotification(n, result)
 			}
 			if msg.Error != nil {
+				// The generic message is often just "Internal error"
+				// (code -32603); goose puts the real cause (provider/quota/
+				// auth error, tool crash, …) in the optional data field.
+				if len(msg.Error.Data) > 0 {
+					return nil, fmt.Errorf("prompt error %d: %s (data: %s)", msg.Error.Code, msg.Error.Message, msg.Error.Data)
+				}
 				return nil, fmt.Errorf("prompt error %d: %s", msg.Error.Code, msg.Error.Message)
 			}
 			if err := json.Unmarshal(msg.Result, result); err != nil {
 				return nil, fmt.Errorf("parse prompt result: %w", err)
 			}
+			result.ToolCalls = turnCount
 			return result, nil
 		}
 	}

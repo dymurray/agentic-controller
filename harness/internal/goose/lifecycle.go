@@ -1,13 +1,16 @@
 package goose
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,6 +24,7 @@ type ServeProcess struct {
 	secretKey string
 	done      chan struct{}
 	tempDirs  []string
+	output    *captureWriter
 }
 
 const (
@@ -36,6 +40,31 @@ const (
 	// pod's external ACP surface is the tee.
 	LoopbackACPPort = 4001
 )
+
+// captureWriter tees goose serve's output to an underlying writer (live
+// streaming) while retaining a full copy in a buffer, so a stage failure can
+// dump the complete goose log. os/exec copies stdout and stderr from separate
+// goroutines, so writes may be concurrent — the mutex keeps buffer and live
+// output consistent and prevents interleaved partial lines.
+type captureWriter struct {
+	mu  sync.Mutex
+	w   io.Writer
+	buf bytes.Buffer
+}
+
+func (c *captureWriter) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.buf.Write(p)
+	return c.w.Write(p)
+}
+
+// snapshot returns a copy of everything written so far.
+func (c *captureWriter) snapshot() []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]byte(nil), c.buf.Bytes()...)
+}
 
 // StartServe launches goose serve per cfg. Takes a struct rather than a
 // positional list: the parameters are a clump of same-typed strings, and
@@ -91,12 +120,22 @@ func StartServe(ctx context.Context, cfg ServeConfig) (*ServeProcess, error) {
 		"--with-builtin", "developer",
 	)
 	env, tempDirs := providerEnv(provider, model, apiKey, endpoint)
+	// goose is quiet on stderr by default, so a failed prompt leaves nothing to
+	// dump. Raise its log level so provider/auth/quota errors surface in the
+	// captured output. Respect an operator-provided RUST_LOG if already set.
+	if os.Getenv("RUST_LOG") == "" {
+		env = append(env, "RUST_LOG=goose=debug,goose_server=debug,info")
+	}
 	if secretKey != "" {
 		env = append(env, "GOOSE_SERVER__SECRET_KEY="+secretKey)
 	}
 	cmd.Env = env
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	// Tee goose's stdout+stderr to our stderr (live streaming) while retaining
+	// a full copy, so a stage failure can dump the complete goose log — the ACP
+	// layer only surfaces an opaque JSON-RPC error and hides the real cause.
+	out := &captureWriter{w: os.Stderr}
+	cmd.Stdout = out
+	cmd.Stderr = out
 
 	if err := cmd.Start(); err != nil {
 		for _, d := range tempDirs {
@@ -111,6 +150,7 @@ func StartServe(ctx context.Context, cfg ServeConfig) (*ServeProcess, error) {
 		secretKey: secretKey,
 		done:      make(chan struct{}),
 		tempDirs:  tempDirs,
+		output:    out,
 	}
 
 	go func() {
@@ -119,6 +159,7 @@ func StartServe(ctx context.Context, cfg ServeConfig) (*ServeProcess, error) {
 	}()
 
 	logging.Info("goose serve started on port %d (pid %d)", port, cmd.Process.Pid)
+	logging.Info("goose provider=%q model=%q endpoint=%q", provider, model, endpoint)
 	return srv, nil
 }
 
@@ -140,6 +181,16 @@ func (s *ServeProcess) Alive() bool {
 	default:
 		return true
 	}
+}
+
+// Output returns a snapshot of everything goose serve has written to
+// stdout/stderr so far. Used to dump the full goose log on stage failure,
+// where the ACP layer only surfaces an opaque JSON-RPC error.
+func (s *ServeProcess) Output() []byte {
+	if s.output == nil {
+		return nil
+	}
+	return s.output.snapshot()
 }
 
 // Stop sends SIGTERM and waits up to 5 seconds, then SIGKILL.
@@ -219,6 +270,24 @@ func providerEnv(provider, model, apiKey, endpoint string) (env []string, tempDi
 	}
 
 	if p == "gcp_vertex_ai" {
+		// goose's Vertex provider requires GCP_PROJECT_ID and GCP_LOCATION.
+		// The platform passes these as workflow-run params (KONVEYOR_PARAM_*),
+		// which goose doesn't read — forward them under the names goose expects
+		// (unless already set explicitly). Without a project goose can't build
+		// the provider and fails the prompt with "Provider not set".
+		if os.Getenv("GCP_PROJECT_ID") == "" {
+			if v := os.Getenv("KONVEYOR_PARAM_GCP_PROJECT_ID"); v != "" {
+				env = append(env, "GCP_PROJECT_ID="+v)
+			} else {
+				logging.Warn(`gcp_vertex_ai: neither GCP_PROJECT_ID nor KONVEYOR_PARAM_GCP_PROJECT_ID is set — goose will report "Provider not set"`)
+			}
+		}
+		if os.Getenv("GCP_LOCATION") == "" {
+			if v := os.Getenv("KONVEYOR_PARAM_GCP_LOCATION"); v != "" {
+				env = append(env, "GCP_LOCATION="+v)
+			}
+		}
+
 		content := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
 		if content != "" {
 			path, err := writeADCFile(content)
