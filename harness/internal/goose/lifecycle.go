@@ -1,7 +1,6 @@
 package goose
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -41,29 +40,50 @@ const (
 	LoopbackACPPort = 4001
 )
 
+// maxCapturedBytes bounds how much goose output captureWriter retains for the
+// failure dump. Older bytes are discarded as new output arrives, keeping only
+// the most recent (most failure-relevant) tail so memory can't grow without
+// bound on a long, verbose run. Live streaming to stderr is unaffected.
+const maxCapturedBytes = 1 << 20 // 1 MiB
+
 // captureWriter tees goose serve's output to an underlying writer (live
-// streaming) while retaining a full copy in a buffer, so a stage failure can
-// dump the complete goose log. os/exec copies stdout and stderr from separate
-// goroutines, so writes may be concurrent — the mutex keeps buffer and live
-// output consistent and prevents interleaved partial lines.
+// streaming) while retaining a bounded tail (maxCapturedBytes) for the failure
+// dump. os/exec copies stdout and stderr from separate goroutines, so writes
+// may be concurrent — the mutex keeps buffer and live output consistent and
+// prevents interleaved partial lines.
 type captureWriter struct {
-	mu  sync.Mutex
-	w   io.Writer
-	buf bytes.Buffer
+	mu        sync.Mutex
+	w         io.Writer
+	buf       []byte
+	truncated bool
 }
 
 func (c *captureWriter) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.buf.Write(p)
+	c.buf = append(c.buf, p...)
+	// Retain only the most recent maxCapturedBytes. Compact once we've grown
+	// well past the cap so the trim is amortised, dropping the oldest bytes.
+	if len(c.buf) > 2*maxCapturedBytes {
+		c.buf = append(c.buf[:0], c.buf[len(c.buf)-maxCapturedBytes:]...)
+		c.truncated = true
+	}
 	return c.w.Write(p)
 }
 
-// snapshot returns a copy of everything written so far.
+// snapshot returns the retained tail, prefixed with a truncation marker when
+// earlier output was dropped.
 func (c *captureWriter) snapshot() []byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]byte(nil), c.buf.Bytes()...)
+	if !c.truncated {
+		return append([]byte(nil), c.buf...)
+	}
+	const marker = "[... earlier goose output truncated; showing the most recent output only ...]\n"
+	out := make([]byte, 0, len(marker)+len(c.buf))
+	out = append(out, marker...)
+	out = append(out, c.buf...)
+	return out
 }
 
 // StartServe launches goose serve per cfg. Takes a struct rather than a
@@ -130,8 +150,8 @@ func StartServe(ctx context.Context, cfg ServeConfig) (*ServeProcess, error) {
 		env = append(env, "GOOSE_SERVER__SECRET_KEY="+secretKey)
 	}
 	cmd.Env = env
-	// Tee goose's stdout+stderr to our stderr (live streaming) while retaining
-	// a full copy, so a stage failure can dump the complete goose log — the ACP
+	// Tee goose's stdout+stderr to our stderr (live streaming) while retaining a
+	// bounded tail, so a stage failure can dump recent goose output — the ACP
 	// layer only surfaces an opaque JSON-RPC error and hides the real cause.
 	out := &captureWriter{w: os.Stderr}
 	cmd.Stdout = out
@@ -183,9 +203,10 @@ func (s *ServeProcess) Alive() bool {
 	}
 }
 
-// Output returns a snapshot of everything goose serve has written to
-// stdout/stderr so far. Used to dump the full goose log on stage failure,
-// where the ACP layer only surfaces an opaque JSON-RPC error.
+// Output returns the retained (bounded) tail of goose serve's stdout/stderr,
+// with a truncation marker prepended if earlier output was dropped. Used to
+// dump recent goose output on stage failure, where the ACP layer only surfaces
+// an opaque JSON-RPC error.
 func (s *ServeProcess) Output() []byte {
 	if s.output == nil {
 		return nil
