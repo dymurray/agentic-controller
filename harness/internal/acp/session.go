@@ -269,10 +269,13 @@ func (c *SessionClient) SendPrompt(ctx context.Context, sessionID string, conten
 				// The generic message is often just "Internal error"
 				// (code -32603); goose puts the real cause (provider/quota/
 				// auth error, tool crash, …) in the optional data field.
+				// Return the result (not nil) so ToolCalls is available even
+				// on a failed prompt.
+				result.ToolCalls = turnCount
 				if len(msg.Error.Data) > 0 {
-					return nil, fmt.Errorf("prompt error %d: %s (data: %s)", msg.Error.Code, msg.Error.Message, msg.Error.Data)
+					return result, fmt.Errorf("prompt error %d: %s (data: %s)", msg.Error.Code, msg.Error.Message, msg.Error.Data)
 				}
-				return nil, fmt.Errorf("prompt error %d: %s", msg.Error.Code, msg.Error.Message)
+				return result, fmt.Errorf("prompt error %d: %s", msg.Error.Code, msg.Error.Message)
 			}
 			if err := json.Unmarshal(msg.Result, result); err != nil {
 				return nil, fmt.Errorf("parse prompt result: %w", err)
