@@ -1,0 +1,10 @@
+kind: enhancement
+description: >
+  Harness surfaces run parameters (KONVEYOR_PARAM_*) to the agent in the
+  stage prompt so tasks can act on inputs like a JIRA URL, and improves
+  failure diagnostics: goose's JSON-RPC error detail is surfaced, each turn
+  logs its stop reason, token usage and tool-call count, and goose's recent
+  output (bounded tail) is dumped on a failed stage. A turn that makes no
+  tool calls is now reported as a failed stage instead of a success, and
+  GCP_PROJECT_ID / GCP_LOCATION are forwarded to goose so the gcp_vertex_ai
+  provider initializes.
