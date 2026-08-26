@@ -83,14 +83,6 @@ func envWithFallback(primary, fallback string) string {
 	return os.Getenv(fallback)
 }
 
-// envOrDefault reads name, returning def when it is unset or empty.
-func envOrDefault(name, def string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return def
-}
-
 // gitAuthorFromEnv reads the commit identity as one indivisible pair: both
 // KONVEYOR_GIT_AUTHOR_NAME and KONVEYOR_GIT_AUTHOR_EMAIL must be present to
 // take effect, otherwise the historical default identity is used for both.

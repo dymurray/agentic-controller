@@ -119,7 +119,10 @@ func TestBuildEnvVarsGitIdentity(t *testing.T) {
 		}
 	})
 
-	t.Run("omits git identity when unset", func(t *testing.T) {
+	t.Run("emits empty git identity when unset", func(t *testing.T) {
+		// Both vars are emitted even when unset: an explicit empty value in
+		// container env outranks any copy smuggled in via run.Spec.EnvFrom,
+		// and an empty pair makes the harness fall back to its default.
 		agent := &konveyoriov1alpha1.Agent{}
 		run := &konveyoriov1alpha1.AgentRun{}
 
@@ -127,11 +130,38 @@ func TestBuildEnvVarsGitIdentity(t *testing.T) {
 		if err != nil {
 			t.Fatalf("buildEnvVars: %v", err)
 		}
-		if _, ok := findEnv(env, "KONVEYOR_GIT_AUTHOR_NAME"); ok {
-			t.Error("KONVEYOR_GIT_AUTHOR_NAME should be absent when unset")
+		if v, ok := findEnv(env, "KONVEYOR_GIT_AUTHOR_NAME"); !ok || v != "" {
+			t.Errorf("KONVEYOR_GIT_AUTHOR_NAME = %q (present=%v), want present and empty", v, ok)
 		}
-		if _, ok := findEnv(env, "KONVEYOR_GIT_AUTHOR_EMAIL"); ok {
-			t.Error("KONVEYOR_GIT_AUTHOR_EMAIL should be absent when unset")
+		if v, ok := findEnv(env, "KONVEYOR_GIT_AUTHOR_EMAIL"); !ok || v != "" {
+			t.Errorf("KONVEYOR_GIT_AUTHOR_EMAIL = %q (present=%v), want present and empty", v, ok)
+		}
+	})
+
+	t.Run("emits git identity in env even when run.Spec.EnvFrom is present", func(t *testing.T) {
+		// run.Spec.EnvFrom can name a Secret/ConfigMap carrying both reserved
+		// keys (its contents can't be inspected at admission). The managed
+		// identity must land in container env, which Kubernetes ranks above
+		// envFrom, so a forged pair injected that way never wins. The
+		// EnvFrom source is merged onto the pod at the Sandbox call site.
+		agent := &konveyoriov1alpha1.Agent{}
+		agent.Spec.GitConfig = gitCfg(gitNameAgent, gitEmailAgent)
+		run := &konveyoriov1alpha1.AgentRun{}
+		run.Spec.EnvFrom = []corev1.EnvFromSource{
+			{ConfigMapRef: &corev1.ConfigMapEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "forged-identity"},
+			}},
+		}
+
+		env, _, err := r.buildEnvVars(context.Background(), run, agent, "acp-secret")
+		if err != nil {
+			t.Fatalf("buildEnvVars: %v", err)
+		}
+		if v, ok := findEnv(env, "KONVEYOR_GIT_AUTHOR_NAME"); !ok || v != gitNameAgent {
+			t.Errorf("KONVEYOR_GIT_AUTHOR_NAME = %q (present=%v), want %q", v, ok, gitNameAgent)
+		}
+		if v, ok := findEnv(env, "KONVEYOR_GIT_AUTHOR_EMAIL"); !ok || v != gitEmailAgent {
+			t.Errorf("KONVEYOR_GIT_AUTHOR_EMAIL = %q (present=%v), want %q", v, ok, gitEmailAgent)
 		}
 	})
 

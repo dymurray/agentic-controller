@@ -112,7 +112,9 @@ const (
 
 	// gitAuthorNameEnv / gitAuthorEmailEnv carry the resolved commit
 	// identity to the harness. They are controller-managed: a user copy in
-	// run.Spec.Env is dropped so it cannot bypass GitConfig's validation
+	// run.Spec.Env is dropped, and the controller always emits both (even
+	// empty) so container env outranks any copy smuggled in through
+	// run.Spec.EnvFrom. Neither path can bypass GitConfig's validation
 	// (the both-or-neither and no-metacharacter rules that guard against
 	// forged or half-set commit authorship).
 	gitAuthorNameEnv  = "KONVEYOR_GIT_AUTHOR_NAME"
@@ -636,21 +638,16 @@ func (r *AgentRunReconciler) buildEnvVars(
 	}
 
 	// Git commit identity. AgentRun overrides Agent per field; unset
-	// fields are left absent so the harness applies its default. The
-	// controller only forwards declared values — it holds no default.
+	// fields resolve to empty. Both vars are always emitted, even when
+	// empty: container env takes precedence over envFrom, so an explicit
+	// (empty) value here overrides any KONVEYOR_GIT_AUTHOR_* smuggled in
+	// through run.Spec.EnvFrom, and an empty pair makes the harness fall
+	// back to its default identity rather than a forged or half-set one.
 	gitName, gitEmail := resolveGitIdentity(agent, run)
-	if gitName != "" {
-		env = append(env, corev1.EnvVar{
-			Name:  gitAuthorNameEnv,
-			Value: gitName,
-		})
-	}
-	if gitEmail != "" {
-		env = append(env, corev1.EnvVar{
-			Name:  gitAuthorEmailEnv,
-			Value: gitEmail,
-		})
-	}
+	env = append(env,
+		corev1.EnvVar{Name: gitAuthorNameEnv, Value: gitName},
+		corev1.EnvVar{Name: gitAuthorEmailEnv, Value: gitEmail},
+	)
 
 	// Gateway credential mounting. One run = one gateway = one model.
 	if run.Spec.Gateway != "" {
