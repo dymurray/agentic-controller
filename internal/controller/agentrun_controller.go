@@ -135,10 +135,11 @@ type AgentRunReconciler struct {
 
 	// apiReader reads directly from the API server, bypassing the manager
 	// cache. It is used only for the best-effort pod termination-message
-	// lookup so the controller does not start a cluster-wide Pod informer
-	// (the cache has no namespace/ByObject restriction). A direct read also
-	// avoids surfacing a stale generic message when the Pod cache lags the
-	// Sandbox "Finished" condition. Set by SetupWithManager.
+	// lookup: a direct read avoids surfacing a stale generic message when
+	// the label-restricted Pod cache (see SandboxPodCacheOptions) lags the
+	// Sandbox "Finished" condition. The cache-backed client still serves the
+	// phase=Running read, so the controller keeps watching sandbox pods. Set
+	// by SetupWithManager.
 	apiReader client.Reader
 }
 
@@ -147,7 +148,7 @@ type AgentRunReconciler struct {
 // +kubebuilder:rbac:groups=konveyor.io,resources=agentruns/finalizers,verbs=update
 // +kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update
 
 // Reconcile handles AgentRun reconciliation.
