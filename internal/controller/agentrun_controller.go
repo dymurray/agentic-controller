@@ -110,6 +110,14 @@ const (
 	// SkillCard imposes on what they carry.
 	skillSourcesEnv = "KONVEYOR_SKILL_SOURCES"
 
+	// gitAuthorNameEnv / gitAuthorEmailEnv carry the resolved commit
+	// identity to the harness. They are controller-managed: a user copy in
+	// run.Spec.Env is dropped so it cannot bypass GitConfig's validation
+	// (the both-or-neither and no-metacharacter rules that guard against
+	// forged or half-set commit authorship).
+	gitAuthorNameEnv  = "KONVEYOR_GIT_AUTHOR_NAME"
+	gitAuthorEmailEnv = "KONVEYOR_GIT_AUTHOR_EMAIL"
+
 	// sandboxFinishedReasonSucceeded is the Sandbox condition reason for
 	// success. Must match Agent Sandbox's SandboxReasonPodSucceeded constant.
 	sandboxFinishedReasonSucceeded = "PodSucceeded"
@@ -608,6 +616,23 @@ func (r *AgentRunReconciler) buildEnvVars(
 		})
 	}
 
+	// Git commit identity. AgentRun overrides Agent per field; unset
+	// fields are left absent so the harness applies its default. The
+	// controller only forwards declared values — it holds no default.
+	gitName, gitEmail := resolveGitIdentity(agent, run)
+	if gitName != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  gitAuthorNameEnv,
+			Value: gitName,
+		})
+	}
+	if gitEmail != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  gitAuthorEmailEnv,
+			Value: gitEmail,
+		})
+	}
+
 	// Gateway credential mounting. One run = one gateway = one model.
 	if run.Spec.Gateway != "" {
 		var gateway konveyoriov1alpha1.Gateway
@@ -657,10 +682,38 @@ func (r *AgentRunReconciler) buildEnvVars(
 		}
 	}
 
-	// Pass through user-specified env vars.
-	env = append(env, run.Spec.Env...)
+	// Pass through user-specified env vars, but never let them override the
+	// controller-managed git commit identity. A raw KONVEYOR_GIT_AUTHOR_*
+	// in run.Spec.Env would otherwise win by last-key-wins and bypass
+	// GitConfig's validation, forging authorship or leaving a half-set
+	// identity (one field user-supplied, the other the harness default).
+	for _, e := range run.Spec.Env {
+		if e.Name == gitAuthorNameEnv || e.Name == gitAuthorEmailEnv {
+			continue
+		}
+		env = append(env, e)
+	}
 
 	return env, envFrom, nil
+}
+
+// resolveGitIdentity computes the git commit identity (name, email) for a
+// run. Name and email are one indivisible identity: an AgentRun's
+// GitConfig replaces the Agent's wholesale rather than merging per field
+// (a both-or-neither CRD constraint guarantees each GitConfig carries
+// both). Empty return values mean "not configured" — the harness
+// supplies its own default in that case.
+func resolveGitIdentity(
+	agent *konveyoriov1alpha1.Agent,
+	run *konveyoriov1alpha1.AgentRun,
+) (name, email string) {
+	if gc := run.Spec.GitConfig; gc != nil {
+		return gc.UserName, gc.UserEmail
+	}
+	if gc := agent.Spec.GitConfig; gc != nil {
+		return gc.UserName, gc.UserEmail
+	}
+	return "", ""
 }
 
 // skillSources is the staged result of resolving an Agent's skill refs.
