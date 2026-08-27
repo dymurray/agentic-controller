@@ -42,6 +42,7 @@ to the "` + defaultNamespace + `" namespace (override with --namespace).`,
 	cmd.AddCommand(newAgentCommand(cfg))
 	cmd.AddCommand(newWorkflowCommand(cfg))
 	cmd.AddCommand(newSkillCommand(cfg))
+	cmd.AddCommand(newHubCommand(cfg))
 
 	return cmd
 }

@@ -29,6 +29,34 @@ func TestRunContextBuild(t *testing.T) {
 	}
 }
 
+func TestRunContextBuildHubToken(t *testing.T) {
+	// hubToken + app ⇒ HUB_TOKEN is injected.
+	rc := runContext{appID: "10", hubBaseURL: defaultHubBaseURL, hubToken: "pat-xyz"}
+	env, _, err := rc.build(false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := map[string]string{}
+	for _, e := range env {
+		got[e.Name] = e.Value
+	}
+	if got["HUB_TOKEN"] != "pat-xyz" {
+		t.Errorf("HUB_TOKEN = %q, want pat-xyz", got["HUB_TOKEN"])
+	}
+
+	// hubToken without app ⇒ no HUB_TOKEN (hub context is app-scoped).
+	rc = runContext{hubToken: "pat-xyz"}
+	env, _, err = rc.build(false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, e := range env {
+		if e.Name == "HUB_TOKEN" {
+			t.Errorf("HUB_TOKEN should not be set without --app, got %q", e.Value)
+		}
+	}
+}
+
 func TestRunContextBuildNoAppStaysClean(t *testing.T) {
 	// Without --app and without an explicit --git-secret, nothing is injected.
 	rc := runContext{gitSecret: defaultGitSecret}

@@ -37,6 +37,7 @@ Commands default to the `konveyor-tackle` namespace (override with
 `~/.kube/config`.
 
 ```sh
+kubectl kai hub login --hub-url <url> # authenticate to Tackle Hub (saves a token for runs)
 kubectl kai gateway create           # provider-validated wizard (creates the credential Secret inline)
 kubectl kai agent create
 kubectl kai workflow create
@@ -69,9 +70,29 @@ kubectl kai workflow run github-issue-triage \
 and wires the `github-credentials` Secret (`GH_TOKEN`) in as `envFrom` so the run
 can push. Override the credential Secret with `--git-secret` (empty to skip), set
 `TARGET_BRANCH` with `--target-branch`, and pass anything else through with
-repeatable `--env NAME=VALUE` and `--env-from SECRET` flags (for example to supply
-a Hub-minted `HUB_TOKEN`). Without `--app`, runs stay clean — nothing is injected
-unless you ask for it.
+repeatable `--env NAME=VALUE` and `--env-from SECRET` flags. Without `--app`, runs
+stay clean — nothing is injected unless you ask for it.
+
+### Hub login
+
+Runs that talk to the inventory need `HUB_TOKEN`. `hub login` mints one and saves
+it locally so app-scoped runs pick it up automatically:
+
+```sh
+kubectl kai hub login --hub-url https://<tackle-hub-route>   # prompts username + password
+kubectl kai workflow run github-issue-triage --app 10        # HUB_TOKEN injected automatically
+```
+
+`hub login` prompts for a Hub username and a masked password, mints a personal
+access token (lifespan `--lifespan` hours, default 30 days), and writes it to
+`hub.json` in your user config dir (mode `0600`). Use `--insecure` for a
+self-signed Hub Route. Because the in-cluster Hub address isn't reachable from a
+laptop, pass the external Hub URL (the OpenShift Route) to `--hub-url`.
+
+The saved token is injected as `HUB_TOKEN` on any `agent run` / `workflow run`
+that uses `--app`; override it per-run with `--hub-token`, or clear the saved
+token with `kubectl kai hub logout`. Note: `hub login` uses HTTP Basic auth, which
+works for **local Hub users** (not external IdP/Keycloak users).
 
 ### Gateways
 
