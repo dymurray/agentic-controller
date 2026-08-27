@@ -213,6 +213,9 @@ func newWorkflowRunCommand(cfg *kaiConfig) *cobra.Command {
 		Short: "Run an Agent Workflow",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := rc.resolveHubToken(); err != nil {
+				return err
+			}
 			env, envFrom, err := rc.build(cmd.Flags().Changed("git-secret"))
 			if err != nil {
 				return err

@@ -8,5 +8,7 @@ description: >
   derives the model context window from a per-model default table, and covers
   anthropic, openai, google, xai, gcp-vertex-ai and aws-bedrock. Agent and
   workflow runs can target an inventory application with --app, which sets
-  APP_ID, the Hub endpoint and the git-credentials Secret on the run. The command
-  tree lives in the reusable pkg/kai package so other tools can embed it.
+  APP_ID, the Hub endpoint and the git-credentials Secret on the run. 'hub login'
+  authenticates to Tackle Hub and saves a token that app-scoped runs inject as
+  HUB_TOKEN. The command tree lives in the reusable pkg/kai package so other tools
+  can embed it.

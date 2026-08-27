@@ -31,6 +31,9 @@ type runContext struct {
 	gitSecret    string
 	env          []string
 	envFrom      []string
+	// hubToken is the Hub credential injected as HUB_TOKEN. It is populated
+	// from the --hub-token flag, else from the token saved by 'hub login'.
+	hubToken string
 }
 
 // addFlags registers the application-context flags on a run command.
@@ -40,8 +43,28 @@ func (rc *runContext) addFlags(cmd *cobra.Command) {
 	f.StringVar(&rc.hubBaseURL, "hub-url", defaultHubBaseURL, "Tackle Hub base URL (applied with --app)")
 	f.StringVar(&rc.targetBranch, "target-branch", "", "TARGET_BRANCH for the run")
 	f.StringVar(&rc.gitSecret, "git-secret", defaultGitSecret, "Secret providing git credentials (GH_TOKEN) via envFrom; empty to skip")
+	f.StringVar(&rc.hubToken, "hub-token", "", "HUB_TOKEN for the run (overrides the token saved by 'hub login'; applied with --app)")
 	f.StringArrayVar(&rc.env, "env", nil, "additional environment variable as NAME=VALUE (repeatable)")
 	f.StringArrayVar(&rc.envFrom, "env-from", nil, "additional Secret to import as envFrom (repeatable)")
+}
+
+// resolveHubToken fills hubToken from the token saved by 'hub login' when it was
+// not supplied via --hub-token and the run targets an application. A missing
+// saved token is not an error: the run simply carries no HUB_TOKEN.
+func (rc *runContext) resolveHubToken() error {
+	if rc.hubToken != "" || rc.appID == "" {
+		return nil
+	}
+	dir, err := hubConfigDir()
+	if err != nil {
+		return err
+	}
+	c, err := loadHubToken(dir)
+	if err != nil {
+		return err
+	}
+	rc.hubToken = c.Token
+	return nil
 }
 
 // build resolves the flags into env vars and envFrom sources for a run spec.
@@ -54,6 +77,9 @@ func (rc *runContext) build(gitSecretChanged bool) ([]corev1.EnvVar, []corev1.En
 		env = append(env, corev1.EnvVar{Name: "APP_ID", Value: rc.appID})
 		if strings.TrimSpace(rc.hubBaseURL) != "" {
 			env = append(env, corev1.EnvVar{Name: "HUB_BASE_URL", Value: strings.TrimSpace(rc.hubBaseURL)})
+		}
+		if strings.TrimSpace(rc.hubToken) != "" {
+			env = append(env, corev1.EnvVar{Name: "HUB_TOKEN", Value: strings.TrimSpace(rc.hubToken)})
 		}
 	}
 	if tb := strings.TrimSpace(rc.targetBranch); tb != "" {
