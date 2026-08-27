@@ -51,6 +51,28 @@ kubectl kai workflow run <name>
 Each group supports `create`, `edit`, `delete`, `list`, `get` and `describe`;
 `agent` and `workflow` add `run`.
 
+### Running against an application
+
+The controller is domain-agnostic — it does not talk to Hub or the inventory, so
+the caller resolves application context and sets it on the run. `agent run` and
+`workflow run` do this for you from an application ID you already know:
+
+```sh
+kubectl kai workflow run github-issue-triage \
+  --app 10 \
+  --param issue=177 \
+  --target-branch konveyor/triage-177
+```
+
+`--app` sets `APP_ID` and points the run at Hub via `HUB_BASE_URL`
+(default `http://tackle-hub.konveyor-tackle.svc:8080`, override with `--hub-url`),
+and wires the `github-credentials` Secret (`GH_TOKEN`) in as `envFrom` so the run
+can push. Override the credential Secret with `--git-secret` (empty to skip), set
+`TARGET_BRANCH` with `--target-branch`, and pass anything else through with
+repeatable `--env NAME=VALUE` and `--env-from SECRET` flags (for example to supply
+a Hub-minted `HUB_TOKEN`). Without `--app`, runs stay clean — nothing is injected
+unless you ask for it.
+
 ### Gateways
 
 `gateway create` is a wizard that validates the provider and endpoint, derives
