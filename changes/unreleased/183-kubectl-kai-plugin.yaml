@@ -6,5 +6,7 @@ description: >
   and agents and workflows add run. Gateway create is a provider-validated
   wizard that can create the credential Secret inline with masked input,
   derives the model context window from a per-model default table, and covers
-  anthropic, openai, google, xai, gcp-vertex-ai and aws-bedrock. The command
+  anthropic, openai, google, xai, gcp-vertex-ai and aws-bedrock. Agent and
+  workflow runs can target an inventory application with --app, which sets
+  APP_ID, the Hub endpoint and the git-credentials Secret on the run. The command
   tree lives in the reusable pkg/kai package so other tools can embed it.

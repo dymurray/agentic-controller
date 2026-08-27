@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/huh"
 	agenticv1alpha1 "github.com/konveyor/agentic-controller/api/v1alpha1"
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
@@ -264,23 +265,29 @@ func newAgentRunCommand(cfg *kaiConfig) *cobra.Command {
 		instructions string
 		paramFlags   []string
 		wait         bool
+		rc           runContext
 	)
 	cmd := &cobra.Command{
 		Use:   "run <agent-name>",
 		Short: "Run an Agent (interactive when parameters or a gateway choice are needed)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAgentRun(cmd.Context(), cfg, args[0], gateway, instructions, paramFlags, wait)
+			env, envFrom, err := rc.build(cmd.Flags().Changed("git-secret"))
+			if err != nil {
+				return err
+			}
+			return runAgentRun(cmd.Context(), cfg, args[0], gateway, instructions, paramFlags, wait, env, envFrom)
 		},
 	}
 	cmd.Flags().StringVar(&gateway, "gateway", "", "gateway to use (must be one of the Agent's gateways)")
 	cmd.Flags().StringVar(&instructions, "instructions", "", "task-specific instructions (additional prompt)")
 	cmd.Flags().StringArrayVar(&paramFlags, "param", nil, "parameter value as key=value (repeatable)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for the run to reach a terminal phase")
+	rc.addFlags(cmd)
 	return cmd
 }
 
-func runAgentRun(ctx context.Context, cfg *kaiConfig, name, gateway, instructions string, paramFlags []string, wait bool) error {
+func runAgentRun(ctx context.Context, cfg *kaiConfig, name, gateway, instructions string, paramFlags []string, wait bool, env []corev1.EnvVar, envFrom []corev1.EnvFromSource) error {
 	cl, err := cfg.newClient()
 	if err != nil {
 		return err
@@ -337,6 +344,8 @@ func runAgentRun(ctx context.Context, cfg *kaiConfig, name, gateway, instruction
 			Gateway:      gateway,
 			Params:       runParams,
 			Instructions: strings.TrimSpace(instructions),
+			Env:          env,
+			EnvFrom:      envFrom,
 		},
 	}
 	if err := cl.Create(ctx, run); err != nil {

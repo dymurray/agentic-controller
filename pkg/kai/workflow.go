@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/huh"
 	agenticv1alpha1 "github.com/konveyor/agentic-controller/api/v1alpha1"
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -205,22 +206,28 @@ func newWorkflowRunCommand(cfg *kaiConfig) *cobra.Command {
 		gateway    string
 		paramFlags []string
 		wait       bool
+		rc         runContext
 	)
 	cmd := &cobra.Command{
 		Use:   "run <workflow-name>",
 		Short: "Run an Agent Workflow",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runWorkflowRun(cmd.Context(), cfg, args[0], gateway, paramFlags, wait)
+			env, envFrom, err := rc.build(cmd.Flags().Changed("git-secret"))
+			if err != nil {
+				return err
+			}
+			return runWorkflowRun(cmd.Context(), cfg, args[0], gateway, paramFlags, wait, env, envFrom)
 		},
 	}
 	cmd.Flags().StringVar(&gateway, "gateway", "", "gateway to use for all stages")
 	cmd.Flags().StringArrayVar(&paramFlags, "param", nil, "parameter value as key=value (repeatable)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for the run to reach a terminal phase")
+	rc.addFlags(cmd)
 	return cmd
 }
 
-func runWorkflowRun(ctx context.Context, cfg *kaiConfig, name, gateway string, paramFlags []string, wait bool) error {
+func runWorkflowRun(ctx context.Context, cfg *kaiConfig, name, gateway string, paramFlags []string, wait bool, env []corev1.EnvVar, envFrom []corev1.EnvFromSource) error {
 	cl, err := cfg.newClient()
 	if err != nil {
 		return err
@@ -253,6 +260,8 @@ func runWorkflowRun(ctx context.Context, cfg *kaiConfig, name, gateway string, p
 			WorkflowRef: name,
 			Gateway:     strings.TrimSpace(gateway),
 			Params:      params,
+			Env:         env,
+			EnvFrom:     envFrom,
 		},
 	}
 	if err := cl.Create(ctx, run); err != nil {
