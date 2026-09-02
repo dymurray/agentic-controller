@@ -79,20 +79,33 @@ Runs that talk to the inventory need `HUB_TOKEN`. `hub login` mints one and save
 it locally so app-scoped runs pick it up automatically:
 
 ```sh
-kubectl kai hub login --hub-url https://<tackle-hub-route>   # prompts username + password
+kubectl kai hub login --hub-url https://<tackle-route>/hub   # OIDC device flow
 kubectl kai workflow run github-issue-triage --app 10        # HUB_TOKEN injected automatically
 ```
 
-`hub login` prompts for a Hub username and a masked password, mints a personal
-access token (lifespan `--lifespan` hours, default 30 days), and writes it to
-`hub.json` in your user config dir (mode `0600`). Use `--insecure` for a
-self-signed Hub Route. Because the in-cluster Hub address isn't reachable from a
-laptop, pass the external Hub URL (the OpenShift Route) to `--hub-url`.
+On an interactive terminal `hub login` uses the OIDC **device flow**: it prints a
+verification URL and a user code for you to approve in a browser, then exchanges
+the result for a durable personal access token (lifespan `--lifespan` hours,
+default 30 days). The OIDC issuer is derived from `--hub-url` (override with
+`--issuer-url`) and the client defaults to `kantra` (override with `--client-id`).
+
+If your Hub's device flow isn't available, provide an existing personal access
+token (PAT) instead — create one in the Hub UI, then either:
+
+```sh
+kubectl kai hub login --hub-url https://<tackle-route>/hub --token-stdin   # prompts (masked) or reads piped stdin
+export HUB_TOKEN=<pat>; kubectl kai hub login --hub-url https://<tackle-route>/hub  # HUB_TOKEN env is used as-is
+```
+
+Whichever way the token is obtained, it is validated against the Hub and written
+to `hub.json` in your user config dir (mode `0600`); the token is never echoed.
+Use `--insecure` for a self-signed Hub Route. Because the in-cluster Hub address
+isn't reachable from a laptop, pass the external Hub URL (the OpenShift Route) to
+`--hub-url`.
 
 The saved token is injected as `HUB_TOKEN` on any `agent run` / `workflow run`
 that uses `--app`; override it per-run with `--hub-token`, or clear the saved
-token with `kubectl kai hub logout`. Note: `hub login` uses HTTP Basic auth, which
-works for **local Hub users** (not external IdP/Keycloak users).
+token with `kubectl kai hub logout`.
 
 ### Gateways
 
