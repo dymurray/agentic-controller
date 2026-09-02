@@ -20,7 +20,9 @@ func isTerminalPhase(phase agenticv1alpha1.AgentRunPhase) bool {
 
 // waitForRun polls obj until its phase (read via phaseOf) becomes terminal or
 // the context is cancelled, printing each phase transition.
-func waitForRun(ctx context.Context, cl client.Client, obj client.Object, phaseOf func() agenticv1alpha1.AgentRunPhase) error {
+func waitForRun(
+	ctx context.Context, cl client.Client, obj client.Object, phaseOf func() agenticv1alpha1.AgentRunPhase,
+) error {
 	key := client.ObjectKeyFromObject(obj)
 	var last agenticv1alpha1.AgentRunPhase
 	for {
@@ -29,7 +31,7 @@ func waitForRun(ctx context.Context, cl client.Client, obj client.Object, phaseO
 		}
 		phase := phaseOf()
 		if phase != last {
-			fmt.Fprintf(os.Stdout, "  phase: %s\n", phase)
+			_, _ = fmt.Fprintf(os.Stdout, "  phase: %s\n", phase)
 			last = phase
 		}
 		if isTerminalPhase(phase) {

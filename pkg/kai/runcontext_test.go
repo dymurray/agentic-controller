@@ -4,9 +4,15 @@ import (
 	"testing"
 )
 
+// testHubToken is a sample Hub personal access token used across runContext tests.
+const testHubToken = "pat-xyz"
+
 func TestRunContextBuild(t *testing.T) {
 	// --app injects the full application context and defaults the git Secret.
-	rc := runContext{appID: "10", hubBaseURL: defaultHubBaseURL, gitSecret: defaultGitSecret, targetBranch: "konveyor/triage-177"}
+	rc := runContext{
+		appID: "10", hubBaseURL: defaultHubBaseURL, gitSecret: defaultGitSecret,
+		targetBranch: "konveyor/triage-177",
+	}
 	env, envFrom, err := rc.build(false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -31,7 +37,7 @@ func TestRunContextBuild(t *testing.T) {
 
 func TestRunContextBuildHubToken(t *testing.T) {
 	// hubToken + app ⇒ HUB_TOKEN is injected.
-	rc := runContext{appID: "10", hubBaseURL: defaultHubBaseURL, hubToken: "pat-xyz"}
+	rc := runContext{appID: "10", hubBaseURL: defaultHubBaseURL, hubToken: testHubToken}
 	env, _, err := rc.build(false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -40,18 +46,18 @@ func TestRunContextBuildHubToken(t *testing.T) {
 	for _, e := range env {
 		got[e.Name] = e.Value
 	}
-	if got["HUB_TOKEN"] != "pat-xyz" {
-		t.Errorf("HUB_TOKEN = %q, want pat-xyz", got["HUB_TOKEN"])
+	if got[hubTokenEnvVar] != testHubToken {
+		t.Errorf("HUB_TOKEN = %q, want pat-xyz", got[hubTokenEnvVar])
 	}
 
 	// hubToken without app ⇒ no HUB_TOKEN (hub context is app-scoped).
-	rc = runContext{hubToken: "pat-xyz"}
+	rc = runContext{hubToken: testHubToken}
 	env, _, err = rc.build(false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	for _, e := range env {
-		if e.Name == "HUB_TOKEN" {
+		if e.Name == hubTokenEnvVar {
 			t.Errorf("HUB_TOKEN should not be set without --app, got %q", e.Value)
 		}
 	}
@@ -109,7 +115,7 @@ func TestRunContextBuildExtraEnvAndEnvFrom(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(env) != 2 || env[0].Name != "HUB_TOKEN" || env[1].Value != "7" {
+	if len(env) != 2 || env[0].Name != hubTokenEnvVar || env[1].Value != "7" {
 		t.Errorf("env = %#v", env)
 	}
 	if len(envFrom) != 1 || envFrom[0].SecretRef.Name != "extra-secret" {

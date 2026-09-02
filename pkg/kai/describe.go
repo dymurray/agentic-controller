@@ -39,14 +39,14 @@ func timeStr(t *metav1.Time) string {
 	if t == nil || t.IsZero() {
 		return "<none>"
 	}
-	return t.Time.Format("2006-01-02 15:04:05 MST")
+	return t.Format("2006-01-02 15:04:05 MST")
 }
 
 // ---- Gateway ----
 
 func newGatewayGetCommand(cfg *kaiConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <name>",
+		Use:   useGet,
 		Short: "Show a concise status summary for a Gateway",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -64,7 +64,7 @@ func newGatewayGetCommand(cfg *kaiConfig) *cobra.Command {
 			p.kv("Provider", gw.Spec.Provider)
 			p.kv("Model", gw.Spec.Model.Name)
 			p.kv("Verified", strconv.FormatBool(gw.Status.ConnectionVerified))
-			p.kv("Ready", conditionStatus(gw.Status.Conditions, "Ready"))
+			p.kv("Ready", readyStatus(gw.Status.Conditions))
 			p.kv("Age", age(gw.CreationTimestamp))
 			p.flush()
 			return nil
@@ -74,7 +74,7 @@ func newGatewayGetCommand(cfg *kaiConfig) *cobra.Command {
 
 func newGatewayDescribeCommand(cfg *kaiConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "describe <name>",
+		Use:   useDescribe,
 		Short: "Show full status and configuration for a Gateway",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -111,7 +111,7 @@ func newGatewayDescribeCommand(cfg *kaiConfig) *cobra.Command {
 
 func newAgentGetCommand(cfg *kaiConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <name>",
+		Use:   useGet,
 		Short: "Show a concise status summary for an Agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -128,7 +128,7 @@ func newAgentGetCommand(cfg *kaiConfig) *cobra.Command {
 			p.kv("Namespace", ag.Namespace)
 			p.kv("Image", ag.Spec.Image)
 			p.kv("Gateways", dash(strings.Join(agentGatewayRefs(ag), ", ")))
-			p.kv("Ready", conditionStatus(ag.Status.Conditions, "Ready"))
+			p.kv("Ready", readyStatus(ag.Status.Conditions))
 			p.kv("Age", age(ag.CreationTimestamp))
 			p.flush()
 			return nil
@@ -140,7 +140,7 @@ func newAgentDescribeCommand(cfg *kaiConfig) *cobra.Command {
 	var tail int64
 	var runName string
 	cmd := &cobra.Command{
-		Use:   "describe <name>",
+		Use:   useDescribe,
 		Short: "Show full status for an Agent, including its latest run and logs",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -166,7 +166,7 @@ func newAgentDescribeCommand(cfg *kaiConfig) *cobra.Command {
 
 			if p := strings.TrimSpace(ag.Spec.Prompt); p != "" {
 				section(w, "Prompt:")
-				fmt.Fprintln(w, indent(p))
+				_, _ = fmt.Fprintln(w, indent(p))
 			}
 			if len(ag.Spec.Params) > 0 {
 				section(w, "Parameters:")
@@ -190,7 +190,7 @@ func newAgentDescribeCommand(cfg *kaiConfig) *cobra.Command {
 			}
 			section(w, "Latest Run:")
 			if run == nil {
-				fmt.Fprintln(w, "  <none>")
+				_, _ = fmt.Fprintln(w, "  <none>")
 				return nil
 			}
 			printAgentRun(w, run)
@@ -209,10 +209,15 @@ func newAgentDescribeCommand(cfg *kaiConfig) *cobra.Command {
 	return cmd
 }
 
-func newAgentRunsCommand(cfg *kaiConfig) *cobra.Command {
+// newRunsListCommand builds a "runs" subcommand that lists runs, optionally
+// filtered by a parent name. AgentRuns and AgentWorkflowRuns differ only in
+// their list type, filter field, third column and labels, so those are supplied
+// by collect (which returns the table rows) and the headers/emptyKind labels.
+func newRunsListCommand(cfg *kaiConfig, use, short, emptyKind string, headers []string,
+	collect func(ctx context.Context, cl client.Client, filter string) ([][]string, error)) *cobra.Command {
 	return &cobra.Command{
-		Use:   "runs [agent-name]",
-		Short: "List AgentRuns (optionally filtered by agent)",
+		Use:   use,
+		Short: short,
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, err := cfg.newClient()
@@ -223,39 +228,63 @@ func newAgentRunsCommand(cfg *kaiConfig) *cobra.Command {
 			if len(args) > 0 {
 				filter = args[0]
 			}
-			var list agenticv1alpha1.AgentRunList
-			if err := cl.List(cmd.Context(), &list, client.InNamespace(cfg.namespace)); err != nil {
-				return fmt.Errorf("failed to list agent runs: %w", err)
-			}
-			rows := make([][]string, 0, len(list.Items))
-			for i := range list.Items {
-				r := &list.Items[i]
-				if filter != "" && r.Spec.AgentRef != filter {
-					continue
-				}
-				rows = append(rows, []string{
-					r.Name,
-					r.Spec.AgentRef,
-					dash(r.Spec.Gateway),
-					string(r.Status.Phase),
-					age(r.CreationTimestamp),
-				})
+			rows, err := collect(cmd.Context(), cl, filter)
+			if err != nil {
+				return err
 			}
 			if len(rows) == 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "no agent runs found in namespace %q\n", cfg.namespace)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no %s found in namespace %q\n", emptyKind, cfg.namespace)
 				return nil
 			}
-			table(cmd.OutOrStdout(), []string{"NAME", "AGENT", "GATEWAY", "PHASE", "AGE"}, rows)
+			table(cmd.OutOrStdout(), headers, rows)
 			return nil
 		},
 	}
+}
+
+// collectRunRows lists runs of type L (whose items are E), keeps those matching
+// match, and maps each kept item to a table row. It generalizes the per-run-type
+// listing so agent and workflow "runs" commands share one implementation.
+func collectRunRows[L client.ObjectList, E any](
+	ctx context.Context, cl client.Client, namespace, kind string,
+	list L, items func(L) []E, match func(*E) bool, row func(*E) []string,
+) ([][]string, error) {
+	if err := cl.List(ctx, list, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("failed to list %s: %w", kind, err)
+	}
+	elems := items(list)
+	rows := make([][]string, 0, len(elems))
+	for i := range elems {
+		e := &elems[i]
+		if !match(e) {
+			continue
+		}
+		rows = append(rows, row(e))
+	}
+	return rows, nil
+}
+
+// nolint:dupl // two type-specific instantiations of collectRunRows; the shared
+// logic already lives in newRunsListCommand and collectRunRows.
+func newAgentRunsCommand(cfg *kaiConfig) *cobra.Command {
+	return newRunsListCommand(cfg, "runs [agent-name]",
+		"List AgentRuns (optionally filtered by agent)", "agent runs",
+		[]string{colName, "AGENT", "GATEWAY", colPhase, colAge},
+		func(ctx context.Context, cl client.Client, filter string) ([][]string, error) {
+			return collectRunRows(ctx, cl, cfg.namespace, "agent runs", &agenticv1alpha1.AgentRunList{},
+				func(l *agenticv1alpha1.AgentRunList) []agenticv1alpha1.AgentRun { return l.Items },
+				func(r *agenticv1alpha1.AgentRun) bool { return filter == "" || r.Spec.AgentRef == filter },
+				func(r *agenticv1alpha1.AgentRun) []string {
+					return []string{r.Name, r.Spec.AgentRef, dash(r.Spec.Gateway), string(r.Status.Phase), age(r.CreationTimestamp)}
+				})
+		})
 }
 
 // ---- Workflow ----
 
 func newWorkflowGetCommand(cfg *kaiConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <name>",
+		Use:   useGet,
 		Short: "Show a concise status summary for an Agent Workflow",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -271,7 +300,7 @@ func newWorkflowGetCommand(cfg *kaiConfig) *cobra.Command {
 			p.kv("Name", wf.Name)
 			p.kv("Namespace", wf.Namespace)
 			p.kv("Stages", strconv.Itoa(len(wf.Spec.Stages)))
-			p.kv("Ready", conditionStatus(wf.Status.Conditions, "Ready"))
+			p.kv("Ready", readyStatus(wf.Status.Conditions))
 			p.kv("Age", age(wf.CreationTimestamp))
 			p.flush()
 			return nil
@@ -283,7 +312,7 @@ func newWorkflowDescribeCommand(cfg *kaiConfig) *cobra.Command {
 	var tail int64
 	var runName string
 	cmd := &cobra.Command{
-		Use:   "describe <name>",
+		Use:   useDescribe,
 		Short: "Show full status for an Agent Workflow, including its latest run and logs",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -306,7 +335,7 @@ func newWorkflowDescribeCommand(cfg *kaiConfig) *cobra.Command {
 
 			if g := strings.TrimSpace(wf.Spec.Guide); g != "" {
 				section(w, "Guide:")
-				fmt.Fprintln(w, indent(g))
+				_, _ = fmt.Fprintln(w, indent(g))
 			}
 			if len(wf.Spec.Stages) > 0 {
 				section(w, "Stages:")
@@ -329,7 +358,7 @@ func newWorkflowDescribeCommand(cfg *kaiConfig) *cobra.Command {
 			}
 			section(w, "Latest Run:")
 			if run == nil {
-				fmt.Fprintln(w, "  <none>")
+				_, _ = fmt.Fprintln(w, "  <none>")
 				return nil
 			}
 			printWorkflowRun(w, run)
@@ -338,13 +367,13 @@ func newWorkflowDescribeCommand(cfg *kaiConfig) *cobra.Command {
 			stageRunName := currentStageAgentRun(run)
 			if stageRunName == "" {
 				section(w, "Logs:")
-				fmt.Fprintln(w, "  <no stage has started a run yet>")
+				_, _ = fmt.Fprintln(w, "  <no stage has started a run yet>")
 				return nil
 			}
 			stageRun := &agenticv1alpha1.AgentRun{}
 			if err := getResource(ctx, cl, cfg.namespace, stageRunName, stageRun, "agent run"); err != nil {
 				section(w, "Logs:")
-				fmt.Fprintf(w, "  <%v>\n", err)
+				_, _ = fmt.Fprintf(w, "  <%v>\n", err)
 				return nil
 			}
 			cs, err := cfg.newClientset()
@@ -361,53 +390,30 @@ func newWorkflowDescribeCommand(cfg *kaiConfig) *cobra.Command {
 	return cmd
 }
 
+// nolint:dupl // two type-specific instantiations of collectRunRows; the shared
+// logic already lives in newRunsListCommand and collectRunRows.
 func newWorkflowRunsCommand(cfg *kaiConfig) *cobra.Command {
-	return &cobra.Command{
-		Use:   "runs [workflow-name]",
-		Short: "List AgentWorkflowRuns (optionally filtered by workflow)",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cl, err := cfg.newClient()
-			if err != nil {
-				return err
-			}
-			filter := ""
-			if len(args) > 0 {
-				filter = args[0]
-			}
-			var list agenticv1alpha1.AgentWorkflowRunList
-			if err := cl.List(cmd.Context(), &list, client.InNamespace(cfg.namespace)); err != nil {
-				return fmt.Errorf("failed to list workflow runs: %w", err)
-			}
-			rows := make([][]string, 0, len(list.Items))
-			for i := range list.Items {
-				r := &list.Items[i]
-				if filter != "" && r.Spec.WorkflowRef != filter {
-					continue
-				}
-				rows = append(rows, []string{
-					r.Name,
-					r.Spec.WorkflowRef,
-					dash(r.Status.CurrentStage),
-					string(r.Status.Phase),
-					age(r.CreationTimestamp),
+	return newRunsListCommand(cfg, "runs [workflow-name]",
+		"List AgentWorkflowRuns (optionally filtered by workflow)", "workflow runs",
+		[]string{colName, "WORKFLOW", "CURRENT-STAGE", colPhase, colAge},
+		func(ctx context.Context, cl client.Client, filter string) ([][]string, error) {
+			return collectRunRows(ctx, cl, cfg.namespace, "workflow runs", &agenticv1alpha1.AgentWorkflowRunList{},
+				func(l *agenticv1alpha1.AgentWorkflowRunList) []agenticv1alpha1.AgentWorkflowRun { return l.Items },
+				func(r *agenticv1alpha1.AgentWorkflowRun) bool { return filter == "" || r.Spec.WorkflowRef == filter },
+				func(r *agenticv1alpha1.AgentWorkflowRun) []string {
+					return []string{
+						r.Name, r.Spec.WorkflowRef, dash(r.Status.CurrentStage),
+						string(r.Status.Phase), age(r.CreationTimestamp),
+					}
 				})
-			}
-			if len(rows) == 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "no workflow runs found in namespace %q\n", cfg.namespace)
-				return nil
-			}
-			table(cmd.OutOrStdout(), []string{"NAME", "WORKFLOW", "CURRENT-STAGE", "PHASE", "AGE"}, rows)
-			return nil
-		},
-	}
+		})
 }
 
 // ---- Skill ----
 
 func newSkillGetCommand(cfg *kaiConfig, collection *bool) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <name>",
+		Use:   useGet,
 		Short: "Show a concise status summary for a SkillCard (or SkillCollection)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -425,7 +431,7 @@ func newSkillGetCommand(cfg *kaiConfig, collection *bool) *cobra.Command {
 				p.kv("Name", col.Name)
 				p.kv("Namespace", col.Namespace)
 				p.kv("Resolved Skills", strconv.Itoa(len(col.Status.ResolvedSkills)))
-				p.kv("Ready", conditionStatus(col.Status.Conditions, "Ready"))
+				p.kv("Ready", readyStatus(col.Status.Conditions))
 				p.kv("Age", age(col.CreationTimestamp))
 				p.flush()
 				return nil
@@ -439,7 +445,7 @@ func newSkillGetCommand(cfg *kaiConfig, collection *bool) *cobra.Command {
 			p.kv("Namespace", card.Namespace)
 			p.kv("Type", string(card.Spec.Type))
 			p.kv("Delivery Mode", dash(card.Status.DeliveryMode))
-			p.kv("Ready", conditionStatus(card.Status.Conditions, "Ready"))
+			p.kv("Ready", readyStatus(card.Status.Conditions))
 			p.kv("Age", age(card.CreationTimestamp))
 			p.flush()
 			return nil
@@ -449,7 +455,7 @@ func newSkillGetCommand(cfg *kaiConfig, collection *bool) *cobra.Command {
 
 func newSkillDescribeCommand(cfg *kaiConfig, collection *bool) *cobra.Command {
 	return &cobra.Command{
-		Use:   "describe <name>",
+		Use:   useDescribe,
 		Short: "Show full status for a SkillCard (or SkillCollection)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -473,7 +479,7 @@ func newSkillDescribeCommand(cfg *kaiConfig, collection *bool) *cobra.Command {
 				if len(col.Status.ResolvedSkills) > 0 {
 					section(w, "Resolved Skills:")
 					for _, s := range col.Status.ResolvedSkills {
-						fmt.Fprintf(w, "  - %s\n", s)
+						_, _ = fmt.Fprintf(w, "  - %s\n", s)
 					}
 				}
 				section(w, "Conditions:")
@@ -501,7 +507,7 @@ func newSkillDescribeCommand(cfg *kaiConfig, collection *bool) *cobra.Command {
 			p.flush()
 			if d := strings.TrimSpace(card.Spec.Description); d != "" {
 				section(w, "Description:")
-				fmt.Fprintln(w, indent(d))
+				_, _ = fmt.Fprintln(w, indent(d))
 			}
 			section(w, "Conditions:")
 			printConditions(w, card.Status.Conditions)
@@ -547,7 +553,7 @@ func printAgentParams(w io.Writer, params []agenticv1alpha1.Param) {
 			dash(p.Description),
 		})
 	}
-	table(w, []string{"  NAME", "TYPE", "REQUIRED", "DEFAULT", "DESCRIPTION"}, rows)
+	table(w, []string{"  NAME", "TYPE", colRequired, "DEFAULT", "DESCRIPTION"}, rows)
 }
 
 func printWorkflowStages(w io.Writer, stages []agenticv1alpha1.AgentWorkflowStage) {
@@ -573,7 +579,7 @@ func printAgentRun(w io.Writer, run *agenticv1alpha1.AgentRun) {
 	if run.Status.Duration != nil {
 		p.kv("  Duration", fmt.Sprintf("%ds", *run.Status.Duration))
 	}
-	p.kv("  Ready", conditionStatus(run.Status.Conditions, "Ready"))
+	p.kv("  Ready", readyStatus(run.Status.Conditions))
 	p.flush()
 }
 
@@ -590,7 +596,7 @@ func printWorkflowRun(w io.Writer, run *agenticv1alpha1.AgentWorkflowRun) {
 		for _, s := range run.Status.Stages {
 			rows = append(rows, []string{"  " + s.Name, string(s.Phase), dash(s.AgentRunName)})
 		}
-		table(w, []string{"  STAGE", "PHASE", "AGENT-RUN"}, rows)
+		table(w, []string{"  STAGE", colPhase, "AGENT-RUN"}, rows)
 	}
 }
 
@@ -624,17 +630,17 @@ func currentStageAgentRun(run *agenticv1alpha1.AgentWorkflowRun) string {
 
 func printRunLogs(ctx context.Context, cs *kubernetes.Clientset, w io.Writer, namespace, podName string, tail int64) {
 	if podName == "" {
-		fmt.Fprintln(w, "  <no sandbox pod yet>")
+		_, _ = fmt.Fprintln(w, "  <no sandbox pod yet>")
 		return
 	}
 	logs, err := podLogs(ctx, cs, namespace, podName, tail)
 	if err != nil {
-		fmt.Fprintf(w, "  <could not fetch logs from pod %q: %v>\n", podName, err)
+		_, _ = fmt.Fprintf(w, "  <could not fetch logs from pod %q: %v>\n", podName, err)
 		return
 	}
 	if strings.TrimSpace(logs) == "" {
-		fmt.Fprintln(w, "  <no logs>")
+		_, _ = fmt.Fprintln(w, "  <no logs>")
 		return
 	}
-	fmt.Fprintln(w, indent(logs))
+	_, _ = fmt.Fprintln(w, indent(logs))
 }

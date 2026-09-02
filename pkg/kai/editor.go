@@ -36,7 +36,7 @@ func editResource(ctx context.Context, cl client.Client, obj client.Object) erro
 	}
 
 	if bytes.Equal(bytes.TrimSpace(original), bytes.TrimSpace(edited)) {
-		fmt.Fprintf(os.Stdout, "no changes made to %s\n", key.Name)
+		_, _ = fmt.Fprintf(os.Stdout, "no changes made to %s\n", key.Name)
 		return nil
 	}
 
@@ -47,7 +47,7 @@ func editResource(ctx context.Context, cl client.Client, obj client.Object) erro
 	if err := cl.Update(ctx, obj); err != nil {
 		return fmt.Errorf("failed to apply changes: %w", err)
 	}
-	fmt.Fprintf(os.Stdout, "%s updated\n", key.Name)
+	_, _ = fmt.Fprintf(os.Stdout, "%s updated\n", key.Name)
 	return nil
 }
 
@@ -59,10 +59,10 @@ func openInEditor(content []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 	name := f.Name()
-	defer os.Remove(name)
+	defer func() { _ = os.Remove(name) }()
 
 	if _, err := f.Write(content); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, fmt.Errorf("failed to write temp file: %w", err)
 	}
 	if err := f.Close(); err != nil {

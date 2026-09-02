@@ -76,7 +76,7 @@ func deleteResource(ctx context.Context, cl client.Client, obj client.Object, na
 			return err
 		}
 		if !ok {
-			fmt.Fprintln(os.Stdout, "aborted")
+			_, _ = fmt.Fprintln(os.Stdout, "aborted")
 			return nil
 		}
 	}
@@ -86,6 +86,6 @@ func deleteResource(ctx context.Context, cl client.Client, obj client.Object, na
 		}
 		return fmt.Errorf("failed to delete %s: %w", kind, err)
 	}
-	fmt.Fprintf(os.Stdout, "%s %q deleted\n", kind, name)
+	_, _ = fmt.Fprintf(os.Stdout, "%s %q deleted\n", kind, name)
 	return nil
 }

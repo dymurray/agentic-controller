@@ -34,7 +34,7 @@ func newWorkflowCommand(cfg *kaiConfig) *cobra.Command {
 func newWorkflowCreateCommand(cfg *kaiConfig) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
-		Use:   "create [name]",
+		Use:   useCreate,
 		Short: "Create an Agent Workflow via an interactive wizard",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -134,7 +134,7 @@ func collectStages(agents []string) ([]agenticv1alpha1.AgentWorkflowStage, error
 
 func newWorkflowEditCommand(cfg *kaiConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "edit <name>",
+		Use:   useEdit,
 		Short: "Edit an Agent Workflow in your $EDITOR",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -151,7 +151,7 @@ func newWorkflowEditCommand(cfg *kaiConfig) *cobra.Command {
 func newWorkflowDeleteCommand(cfg *kaiConfig) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "delete <name>",
+		Use:   useDelete,
 		Short: "Delete an Agent Workflow",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -169,7 +169,7 @@ func newWorkflowDeleteCommand(cfg *kaiConfig) *cobra.Command {
 
 func newWorkflowListCommand(cfg *kaiConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
+		Use:   useList,
 		Short: "List Agent Workflows",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -182,7 +182,7 @@ func newWorkflowListCommand(cfg *kaiConfig) *cobra.Command {
 				return fmt.Errorf("failed to list workflows: %w", err)
 			}
 			if len(list.Items) == 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "no workflows found in namespace %q\n", cfg.namespace)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no workflows found in namespace %q\n", cfg.namespace)
 				return nil
 			}
 			rows := make([][]string, 0, len(list.Items))
@@ -191,11 +191,11 @@ func newWorkflowListCommand(cfg *kaiConfig) *cobra.Command {
 				rows = append(rows, []string{
 					wf.Name,
 					fmt.Sprintf("%d", len(wf.Spec.Stages)),
-					conditionStatus(wf.Status.Conditions, "Ready"),
+					readyStatus(wf.Status.Conditions),
 					age(wf.CreationTimestamp),
 				})
 			}
-			table(cmd.OutOrStdout(), []string{"NAME", "STAGES", "READY", "AGE"}, rows)
+			table(cmd.OutOrStdout(), []string{colName, "STAGES", colReady, colAge}, rows)
 			return nil
 		},
 	}
@@ -230,7 +230,10 @@ func newWorkflowRunCommand(cfg *kaiConfig) *cobra.Command {
 	return cmd
 }
 
-func runWorkflowRun(ctx context.Context, cfg *kaiConfig, name, gateway string, paramFlags []string, wait bool, env []corev1.EnvVar, envFrom []corev1.EnvFromSource) error {
+func runWorkflowRun(
+	ctx context.Context, cfg *kaiConfig, name, gateway string, paramFlags []string,
+	wait bool, env []corev1.EnvVar, envFrom []corev1.EnvFromSource,
+) error {
 	cl, err := cfg.newClient()
 	if err != nil {
 		return err
@@ -270,10 +273,10 @@ func runWorkflowRun(ctx context.Context, cfg *kaiConfig, name, gateway string, p
 	if err := cl.Create(ctx, run); err != nil {
 		return fmt.Errorf("failed to create AgentWorkflowRun: %w", err)
 	}
-	fmt.Fprintf(os.Stdout, "workflow run %q created\n", run.Name)
+	_, _ = fmt.Fprintf(os.Stdout, "workflow run %q created\n", run.Name)
 
 	if wait {
-		fmt.Fprintln(os.Stdout, "waiting for run to complete...")
+		_, _ = fmt.Fprintln(os.Stdout, "waiting for run to complete...")
 		return waitForRun(ctx, cl, run, func() agenticv1alpha1.AgentRunPhase { return run.Status.Phase })
 	}
 	return nil

@@ -29,6 +29,7 @@ limitations under the License.
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/go-logr/logr"
@@ -47,6 +48,9 @@ func main() {
 	cmd.SilenceErrors = true
 
 	if err := cmd.Execute(); err != nil {
+		// SilenceErrors suppresses cobra's own printing, so surface the error
+		// here before exiting non-zero.
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }

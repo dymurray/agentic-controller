@@ -2,6 +2,9 @@ package kai
 
 import "testing"
 
+// testSecretName is a placeholder credential Secret name used across tests.
+const testSecretName = "creds"
+
 func TestValidateProvider(t *testing.T) {
 	for _, id := range providerIDs() {
 		if err := validateProvider(id); err != nil {
@@ -20,7 +23,7 @@ func TestValidateEndpoint(t *testing.T) {
 		wantErr bool
 	}{
 		{"https", "https://api.anthropic.com", false},
-		{"http", "http://localhost:8080", false},
+		{"http rejected", "http://localhost:8080", true},
 		{"empty", "", true},
 		{"no scheme", "api.anthropic.com", true},
 		{"ftp scheme", "ftp://example.com", true},
@@ -47,11 +50,11 @@ func TestValidateCredentialRef(t *testing.T) {
 		key        string
 		wantErr    bool
 	}{
-		{"single with key", single, "creds", "api-key", false},
-		{"single missing key", single, "creds", "", true},
-		{"single missing secret", single, "", "api-key", true},
-		{"multi without key", multi, "creds", "", false},
-		{"multi with key rejected", multi, "creds", "api-key", true},
+		{"single with key", single, testSecretName, keyAPIKey, false},
+		{"single missing key", single, testSecretName, "", true},
+		{"single missing secret", single, "", keyAPIKey, true},
+		{"multi without key", multi, testSecretName, "", false},
+		{"multi with key rejected", multi, testSecretName, keyAPIKey, true},
 		{"multi missing secret", multi, "", "", true},
 	}
 	for _, tt := range tests {
@@ -82,7 +85,7 @@ func TestCredentialFieldsFor(t *testing.T) {
 
 	aws, _ := lookupProvider("aws-bedrock")
 	got = credentialFieldsFor(aws, "")
-	want := []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"}
+	want := []string{awsAccessKeyID, awsSecretAccessKey, awsRegion}
 	if len(got) != len(want) {
 		t.Fatalf("aws-bedrock: expected %d fields, got %d", len(want), len(got))
 	}
@@ -104,14 +107,14 @@ func TestXAIProvider(t *testing.T) {
 	if err := validateProvider("xai"); err != nil {
 		t.Errorf("validateProvider(xai) = %v", err)
 	}
-	if err := validateCredentialRef(p, "creds", "api-key"); err != nil {
+	if err := validateCredentialRef(p, testSecretName, keyAPIKey); err != nil {
 		t.Errorf("validateCredentialRef(xai) = %v", err)
 	}
 }
 
 func TestMissingSecretKeys(t *testing.T) {
 	multi, _ := lookupProvider("aws-bedrock")
-	present := map[string][]byte{"AWS_ACCESS_KEY_ID": []byte("x")}
+	present := map[string][]byte{awsAccessKeyID: []byte("x")}
 	missing := missingSecretKeys(multi, present)
 	if len(missing) != 2 {
 		t.Fatalf("expected 2 missing keys, got %v", missing)

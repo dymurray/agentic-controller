@@ -26,12 +26,12 @@ func TestValidateParamValue(t *testing.T) {
 		value   string
 		wantErr bool
 	}{
-		{"string anything", "string", "whatever", false},
-		{"number ok", "number", "3.14", false},
-		{"number bad", "number", "abc", true},
-		{"boolean ok", "boolean", "true", false},
-		{"boolean bad", "boolean", "yesish", true},
-		{"empty skipped", "number", "", false},
+		{"string anything", paramTypeString, "whatever", false},
+		{"number ok", paramTypeNumber, "3.14", false},
+		{"number bad", paramTypeNumber, "abc", true},
+		{"boolean ok", paramTypeBoolean, "true", false},
+		{"boolean bad", paramTypeBoolean, "yesish", true},
+		{"empty skipped", paramTypeNumber, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -51,9 +51,9 @@ func TestResolveRunParams_NonInteractive(t *testing.T) {
 	}
 
 	declared := []agenticv1alpha1.Param{
-		{Name: "REQUIRED", Type: "string", Required: true},
-		{Name: "WITH_DEFAULT", Type: "string", Default: "def"},
-		{Name: "OPTIONAL_EMPTY", Type: "string"},
+		{Name: colRequired, Type: paramTypeString, Required: true},
+		{Name: "WITH_DEFAULT", Type: paramTypeString, Default: "def"},
+		{Name: "OPTIONAL_EMPTY", Type: paramTypeString},
 	}
 
 	// Missing a required param must fail.
@@ -61,8 +61,18 @@ func TestResolveRunParams_NonInteractive(t *testing.T) {
 		t.Error("expected error when required param missing")
 	}
 
+	// An explicitly-empty required param (--param REQUIRED=) must also fail.
+	if _, err := resolveRunParams(declared, map[string]string{colRequired: ""}); err == nil {
+		t.Error("expected error when required param provided empty")
+	}
+
+	// Whitespace-only is treated as empty for a required param.
+	if _, err := resolveRunParams(declared, map[string]string{colRequired: "   "}); err == nil {
+		t.Error("expected error when required param provided as whitespace")
+	}
+
 	// All provided/defaulted: required from flags, default applied, empty optional dropped.
-	out, err := resolveRunParams(declared, map[string]string{"REQUIRED": "val"})
+	out, err := resolveRunParams(declared, map[string]string{colRequired: "val"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -70,8 +80,8 @@ func TestResolveRunParams_NonInteractive(t *testing.T) {
 	for _, p := range out {
 		got[p.Name] = p.Value
 	}
-	if got["REQUIRED"] != "val" {
-		t.Errorf("expected REQUIRED=val, got %q", got["REQUIRED"])
+	if got[colRequired] != "val" {
+		t.Errorf("expected REQUIRED=val, got %q", got[colRequired])
 	}
 	if got["WITH_DEFAULT"] != "def" {
 		t.Errorf("expected WITH_DEFAULT=def, got %q", got["WITH_DEFAULT"])

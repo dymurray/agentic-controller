@@ -6,6 +6,16 @@ import (
 	"strings"
 )
 
+// Credential Secret keys and the required URL scheme, reused across the
+// provider registry, secret handling and endpoint validation.
+const (
+	keyAPIKey          = "api-key"
+	awsAccessKeyID     = "AWS_ACCESS_KEY_ID"
+	awsSecretAccessKey = "AWS_SECRET_ACCESS_KEY"
+	awsRegion          = "AWS_REGION"
+	schemeHTTPS        = "https"
+)
+
 // credentialMode describes how a provider's credentials are supplied to the
 // sandbox, which changes how the Gateway's credentialRef must be filled in.
 type credentialMode string
@@ -56,28 +66,28 @@ var supportedProviders = []providerInfo{
 		DisplayName:     "Anthropic",
 		DefaultEndpoint: "https://api.anthropic.com",
 		CredentialMode:  credentialModeSingleKey,
-		DefaultKeyName:  "api-key",
+		DefaultKeyName:  keyAPIKey,
 	},
 	{
 		ID:              "openai",
 		DisplayName:     "OpenAI",
 		DefaultEndpoint: "https://api.openai.com/v1",
 		CredentialMode:  credentialModeSingleKey,
-		DefaultKeyName:  "api-key",
+		DefaultKeyName:  keyAPIKey,
 	},
 	{
 		ID:              "google",
 		DisplayName:     "Google AI (Gemini)",
 		DefaultEndpoint: "https://generativelanguage.googleapis.com",
 		CredentialMode:  credentialModeSingleKey,
-		DefaultKeyName:  "api-key",
+		DefaultKeyName:  keyAPIKey,
 	},
 	{
 		ID:              "xai",
 		DisplayName:     "xAI (Grok)",
 		DefaultEndpoint: "https://api.x.ai",
 		CredentialMode:  credentialModeSingleKey,
-		DefaultKeyName:  "api-key",
+		DefaultKeyName:  keyAPIKey,
 	},
 	{
 		ID:              "gcp-vertex-ai",
@@ -94,9 +104,9 @@ var supportedProviders = []providerInfo{
 		DefaultEndpoint: "https://bedrock-runtime.us-east-1.amazonaws.com",
 		CredentialMode:  credentialModeMultiKey,
 		CredentialFields: []credentialField{
-			{SecretKey: "AWS_ACCESS_KEY_ID", Prompt: "AWS Access Key ID"},
-			{SecretKey: "AWS_SECRET_ACCESS_KEY", Prompt: "AWS Secret Access Key"},
-			{SecretKey: "AWS_REGION", Prompt: "AWS Region"},
+			{SecretKey: awsAccessKeyID, Prompt: "AWS Access Key ID"},
+			{SecretKey: awsSecretAccessKey, Prompt: "AWS Secret Access Key"},
+			{SecretKey: awsRegion, Prompt: "AWS Region"},
 		},
 	},
 }
@@ -129,7 +139,8 @@ func validateProvider(id string) error {
 	return nil
 }
 
-// validateEndpoint confirms the endpoint is a well-formed absolute URL.
+// validateEndpoint confirms the endpoint is a well-formed absolute https URL.
+// https is required so provider credentials are never sent in cleartext.
 func validateEndpoint(endpoint string) error {
 	endpoint = strings.TrimSpace(endpoint)
 	if endpoint == "" {
@@ -139,8 +150,8 @@ func validateEndpoint(endpoint string) error {
 	if err != nil {
 		return fmt.Errorf("invalid endpoint URL: %w", err)
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("endpoint must be an http(s) URL")
+	if u.Scheme != schemeHTTPS {
+		return fmt.Errorf("endpoint must be an https URL")
 	}
 	if u.Host == "" {
 		return fmt.Errorf("endpoint must include a host")

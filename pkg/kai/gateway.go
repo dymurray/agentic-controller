@@ -36,7 +36,7 @@ func newGatewayCreateCommand(cfg *kaiConfig) *cobra.Command {
 	var dryRun bool
 	var contextWindow int64
 	cmd := &cobra.Command{
-		Use:   "create [name]",
+		Use:   useCreate,
 		Short: "Create a Gateway via an interactive, provider-validated wizard",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -48,7 +48,8 @@ func newGatewayCreateCommand(cfg *kaiConfig) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the Gateway YAML without creating it")
-	cmd.Flags().Int64Var(&contextWindow, "context-window", 0, "model context window in tokens (0 = use the model's default)")
+	cmd.Flags().Int64Var(&contextWindow, "context-window", 0,
+		"model context window in tokens (0 = use the model's default)")
 	return cmd
 }
 
@@ -109,7 +110,9 @@ func runGatewayCreate(ctx context.Context, cfg *kaiConfig, name string, dryRun b
 			cw = d
 		} else {
 			cw = fallbackContextWindow
-			fmt.Fprintf(os.Stderr, "note: unknown model %q; defaulting context window to %d (override with --context-window)\n", strings.TrimSpace(modelName), cw)
+			fmt.Fprintf(os.Stderr,
+				"note: unknown model %q; defaulting context window to %d (override with --context-window)\n",
+				strings.TrimSpace(modelName), cw)
 		}
 	}
 
@@ -130,7 +133,7 @@ func runGatewayCreate(ctx context.Context, cfg *kaiConfig, name string, dryRun b
 	if err := validateCredentialRef(p, secretName, key); err != nil {
 		return err
 	}
-	if !secretCreated {
+	if !secretCreated && !dryRun {
 		warnAboutSecret(ctx, cl, cfg.namespace, p, secretName)
 	}
 
@@ -160,24 +163,24 @@ func runGatewayCreate(ctx context.Context, cfg *kaiConfig, name string, dryRun b
 		return err
 	}
 	if dryRun {
-		fmt.Fprintln(os.Stdout, string(data))
+		_, _ = fmt.Fprintln(os.Stdout, string(data))
 		return nil
 	}
 
-	fmt.Fprintln(os.Stdout, "\n"+string(data))
+	_, _ = fmt.Fprintln(os.Stdout, "\n"+string(data))
 	proceed, err := confirm(fmt.Sprintf("Create Gateway %q in namespace %q?", name, cfg.namespace), true)
 	if err != nil {
 		return err
 	}
 	if !proceed {
-		fmt.Fprintln(os.Stdout, "aborted")
+		_, _ = fmt.Fprintln(os.Stdout, "aborted")
 		return nil
 	}
 
 	if err := cl.Create(ctx, gw); err != nil {
 		return fmt.Errorf("failed to create Gateway: %w", err)
 	}
-	fmt.Fprintf(os.Stdout, "gateway %q created\n", name)
+	_, _ = fmt.Fprintf(os.Stdout, "gateway %q created\n", name)
 	return nil
 }
 
@@ -190,7 +193,9 @@ func warnAboutSecret(ctx context.Context, cl client.Client, namespace string, p 
 	secret := &corev1.Secret{}
 	err := cl.Get(ctx, client.ObjectKey{Namespace: namespace, Name: secretName}, secret)
 	if apierrors.IsNotFound(err) {
-		fmt.Fprintf(os.Stderr, "warning: Secret %q not found in namespace %q; create it before running agents that use this gateway\n", secretName, namespace)
+		fmt.Fprintf(os.Stderr,
+			"warning: Secret %q not found in namespace %q; create it before running agents that use this gateway\n",
+			secretName, namespace)
 		return
 	}
 	if err != nil {
@@ -205,7 +210,7 @@ func warnAboutSecret(ctx context.Context, cl client.Client, namespace string, p 
 
 func newGatewayEditCommand(cfg *kaiConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "edit <name>",
+		Use:   useEdit,
 		Short: "Edit a Gateway in your $EDITOR",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -224,7 +229,7 @@ func newGatewayEditCommand(cfg *kaiConfig) *cobra.Command {
 func newGatewayDeleteCommand(cfg *kaiConfig) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "delete <name>",
+		Use:   useDelete,
 		Short: "Delete a Gateway",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -244,7 +249,7 @@ func newGatewayDeleteCommand(cfg *kaiConfig) *cobra.Command {
 
 func newGatewayListCommand(cfg *kaiConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
+		Use:   useList,
 		Short: "List Gateways",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -257,7 +262,7 @@ func newGatewayListCommand(cfg *kaiConfig) *cobra.Command {
 				return fmt.Errorf("failed to list gateways: %w", err)
 			}
 			if len(list.Items) == 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "no gateways found in namespace %q\n", cfg.namespace)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no gateways found in namespace %q\n", cfg.namespace)
 				return nil
 			}
 			rows := make([][]string, 0, len(list.Items))
@@ -268,11 +273,11 @@ func newGatewayListCommand(cfg *kaiConfig) *cobra.Command {
 					gw.Spec.Provider,
 					gw.Spec.Model.Name,
 					strconv.FormatBool(gw.Status.ConnectionVerified),
-					conditionStatus(gw.Status.Conditions, "Ready"),
+					readyStatus(gw.Status.Conditions),
 					age(gw.CreationTimestamp),
 				})
 			}
-			table(cmd.OutOrStdout(), []string{"NAME", "PROVIDER", "MODEL", "VERIFIED", "READY", "AGE"}, rows)
+			table(cmd.OutOrStdout(), []string{colName, "PROVIDER", "MODEL", "VERIFIED", colReady, colAge}, rows)
 			return nil
 		},
 	}

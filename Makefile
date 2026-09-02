@@ -148,7 +148,7 @@ GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 
 .PHONY: kubectl-kai-build
-kubectl-kai-build: ## Build the kubectl-kai plugin binary (put bin/kubectl-kai on PATH to run "kubectl kai").
+kubectl-kai-build: $(LOCALBIN) ## Build the kubectl-kai plugin binary (put bin/kubectl-kai on PATH to run "kubectl kai").
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o bin/kubectl-kai ./cmd/kubectl-kai
 	if [ "$(GOOS)" = "windows" ]; then mv bin/kubectl-kai bin/kubectl-kai.exe; fi
 

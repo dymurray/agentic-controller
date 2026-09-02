@@ -55,7 +55,9 @@ func collectSecretValues(fields []credentialField) (map[string]string, error) {
 // default key — so the common path is dead simple. The user can instead choose
 // to reference an existing Secret by name. The returned bool reports whether a
 // Secret was created (so the caller can skip the missing-Secret warning).
-func resolveCredentials(ctx context.Context, cl client.Client, namespace, gatewayName string, p providerInfo, dryRun bool) (secretName, key string, created bool, err error) {
+func resolveCredentials(
+	ctx context.Context, cl client.Client, namespace, gatewayName string, p providerInfo, dryRun bool,
+) (secretName, key string, created bool, err error) {
 	if p.CredentialMode == credentialModeSingleKey {
 		key = p.DefaultKeyName
 	}
@@ -84,19 +86,21 @@ func resolveCredentials(ctx context.Context, cl client.Client, namespace, gatewa
 	if err := createOrUpdateSecret(ctx, cl, namespace, secretName, buildSecretData(fields, values)); err != nil {
 		return "", "", false, err
 	}
-	fmt.Fprintf(os.Stdout, "secret %q created\n", secretName)
+	_, _ = fmt.Fprintf(os.Stdout, "secret %q created\n", secretName)
 	return secretName, key, true, nil
 }
 
 // promptExistingSecret asks for the name (and key, for single-key providers) of
 // a Secret the user manages themselves.
 func promptExistingSecret(p providerInfo) (secretName, key string, err error) {
-	if err = runForm(inputField("Existing credential Secret name", "llm-credentials", &secretName, requiredValidator("secret name"))); err != nil {
+	if err = runForm(inputField("Existing credential Secret name", "llm-credentials", &secretName,
+		requiredValidator("secret name"))); err != nil {
 		return "", "", err
 	}
 	if p.CredentialMode == credentialModeSingleKey {
 		key = p.DefaultKeyName
-		if err = runForm(inputField("Secret key holding the API credential", p.DefaultKeyName, &key, requiredValidator("secret key"))); err != nil {
+		if err = runForm(inputField("Secret key holding the API credential", p.DefaultKeyName, &key,
+			requiredValidator("secret key"))); err != nil {
 			return "", "", err
 		}
 	}
