@@ -40,10 +40,14 @@ type runContext struct {
 func (rc *runContext) addFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
 	f.StringVar(&rc.appID, "app", "", "application ID from the inventory; sets APP_ID and the Hub context on the run")
-	f.StringVar(&rc.hubBaseURL, "hub-url", defaultHubBaseURL, "Tackle Hub base URL (applied with --app)")
+	f.StringVar(&rc.hubBaseURL, "hub-url", defaultHubBaseURL,
+		"in-cluster Hub address the run pod uses as HUB_BASE_URL (applied with --app); "+
+			"distinct from the external route passed to 'hub login'")
 	f.StringVar(&rc.targetBranch, "target-branch", "", "TARGET_BRANCH for the run")
-	f.StringVar(&rc.gitSecret, "git-secret", defaultGitSecret, "Secret providing git credentials (GH_TOKEN) via envFrom; empty to skip")
-	f.StringVar(&rc.hubToken, "hub-token", "", "HUB_TOKEN for the run (overrides the token saved by 'hub login'; applied with --app)")
+	f.StringVar(&rc.gitSecret, "git-secret", defaultGitSecret,
+		"Secret providing git credentials (GH_TOKEN) via envFrom; empty to skip")
+	f.StringVar(&rc.hubToken, "hub-token", "",
+		"HUB_TOKEN for the run (overrides the token saved by 'hub login'; applied with --app)")
 	f.StringArrayVar(&rc.env, "env", nil, "additional environment variable as NAME=VALUE (repeatable)")
 	f.StringArrayVar(&rc.envFrom, "env-from", nil, "additional Secret to import as envFrom (repeatable)")
 }
@@ -51,6 +55,11 @@ func (rc *runContext) addFlags(cmd *cobra.Command) {
 // resolveHubToken fills hubToken from the token saved by 'hub login' when it was
 // not supplied via --hub-token and the run targets an application. A missing
 // saved token is not an error: the run simply carries no HUB_TOKEN.
+//
+// Only the token is restored, not the saved login URL: 'hub login' targets the
+// external Hub route (reachable from a laptop), whereas the run's HUB_BASE_URL
+// must be the in-cluster service address the sandbox pod can reach (--hub-url,
+// default defaultHubBaseURL). The minted PAT is portable across both.
 func (rc *runContext) resolveHubToken() error {
 	if rc.hubToken != "" || rc.appID == "" {
 		return nil
@@ -79,7 +88,7 @@ func (rc *runContext) build(gitSecretChanged bool) ([]corev1.EnvVar, []corev1.En
 			env = append(env, corev1.EnvVar{Name: "HUB_BASE_URL", Value: strings.TrimSpace(rc.hubBaseURL)})
 		}
 		if strings.TrimSpace(rc.hubToken) != "" {
-			env = append(env, corev1.EnvVar{Name: "HUB_TOKEN", Value: strings.TrimSpace(rc.hubToken)})
+			env = append(env, corev1.EnvVar{Name: hubTokenEnvVar, Value: strings.TrimSpace(rc.hubToken)})
 		}
 	}
 	if tb := strings.TrimSpace(rc.targetBranch); tb != "" {

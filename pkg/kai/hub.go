@@ -28,17 +28,17 @@ const (
 	hubTokenEnvVar = "HUB_TOKEN"
 )
 
-func newHubCommand(cfg *kaiConfig) *cobra.Command {
+func newHubCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hub",
 		Short: "Authenticate with Tackle Hub",
 	}
-	cmd.AddCommand(newHubLoginCommand(cfg))
-	cmd.AddCommand(newHubLogoutCommand(cfg))
+	cmd.AddCommand(newHubLoginCommand())
+	cmd.AddCommand(newHubLogoutCommand())
 	return cmd
 }
 
-func newHubLoginCommand(cfg *kaiConfig) *cobra.Command {
+func newHubLoginCommand() *cobra.Command {
 	var (
 		hubURL     string
 		issuerURL  string
@@ -69,7 +69,8 @@ func newHubLoginCommand(cfg *kaiConfig) *cobra.Command {
 	cmd.Flags().StringVar(&clientID, "client-id", defaultOIDCClientID, "OIDC client ID")
 	cmd.Flags().IntVar(&lifespan, "lifespan", defaultTokenLifespan, "minted token lifespan in hours (device flow only)")
 	cmd.Flags().BoolVar(&insecure, "insecure", false, "skip TLS certificate verification")
-	cmd.Flags().BoolVar(&tokenStdin, "token-stdin", false, "read an existing Hub personal access token from stdin instead of using the device flow")
+	cmd.Flags().BoolVar(&tokenStdin, "token-stdin", false,
+		"read an existing Hub personal access token from stdin instead of using the device flow")
 	_ = cmd.MarkFlagRequired("hub-url")
 	return cmd
 }
@@ -91,7 +92,7 @@ func runHubLogin(hubURL, issuerURL, clientID string, lifespan int, insecure, tok
 	// relaxes TLS certificate verification (for self-signed Routes), not the scheme.
 	if u, err := url.Parse(hubURL); err != nil {
 		return fmt.Errorf("invalid --hub-url %q: %w", hubURL, err)
-	} else if u.Scheme != "https" {
+	} else if u.Scheme != schemeHTTPS {
 		return fmt.Errorf("--hub-url must use https (got %q); use --insecure for a self-signed certificate", hubURL)
 	}
 	if strings.TrimSpace(issuerURL) == "" {
@@ -130,7 +131,8 @@ func runHubLogin(hubURL, issuerURL, clientID string, lifespan int, insecure, tok
 		return err
 	}
 
-	fmt.Fprintf(os.Stdout, "\nlogged in to %s; token saved to %s\n", hubURL, fmt.Sprintf("%s/%s", dir, hubTokenFile))
+	_, _ = fmt.Fprintf(os.Stdout, "\nlogged in to %s; token saved to %s\n",
+		hubURL, fmt.Sprintf("%s/%s", dir, hubTokenFile))
 	return nil
 }
 
@@ -138,9 +140,11 @@ func runHubLogin(hubURL, issuerURL, clientID string, lifespan int, insecure, tok
 // the HUB_TOKEN environment variable, an existing token read from stdin
 // (--token-stdin or a non-interactive shell), else the OIDC device flow which
 // mints a fresh token. It never echoes the token.
-func resolveHubLoginToken(rc *binding.RichClient, tr *http.Transport, issuerURL, clientID string, lifespan int, tokenStdin bool) (string, error) {
+func resolveHubLoginToken(
+	rc *binding.RichClient, tr *http.Transport, issuerURL, clientID string, lifespan int, tokenStdin bool,
+) (string, error) {
 	if t := strings.TrimSpace(os.Getenv(hubTokenEnvVar)); t != "" {
-		fmt.Fprintf(os.Stdout, "using %s from the environment\n", hubTokenEnvVar)
+		_, _ = fmt.Fprintf(os.Stdout, "using %s from the environment\n", hubTokenEnvVar)
 		return t, nil
 	}
 	if tokenStdin || !isInteractive() {
@@ -151,12 +155,16 @@ func resolveHubLoginToken(rc *binding.RichClient, tr *http.Transport, issuerURL,
 
 // deviceFlowToken runs the OIDC device flow (prints a verification URL and user
 // code, polls until approved) and mints a durable personal access token.
-func deviceFlowToken(rc *binding.RichClient, tr *http.Transport, issuerURL, clientID string, lifespan int) (string, error) {
+func deviceFlowToken(
+	rc *binding.RichClient, tr *http.Transport, issuerURL, clientID string, lifespan int,
+) (string, error) {
 	oidc := auth.NewOIDC(issuerURL, clientID)
 	oidc.SetTransport(tr)
-	fmt.Fprintf(os.Stdout, "Logging in via %s...\n", issuerURL)
+	_, _ = fmt.Fprintf(os.Stdout, "Logging in via %s...\n", issuerURL)
 	if err := oidc.Login(); err != nil {
-		return "", fmt.Errorf("device-flow login failed (create a PAT in the Hub UI and use --token-stdin, or set %s): %w", hubTokenEnvVar, err)
+		return "", fmt.Errorf(
+			"device-flow login failed (create a PAT in the Hub UI and use --token-stdin, or set %s): %w",
+			hubTokenEnvVar, err)
 	}
 	rc.Client.Use(auth.NewBearer(oidc.Token()))
 	pat := &api.PAT{Lifespan: lifespan, Description: "kubectl-kai"}
@@ -181,7 +189,8 @@ func readHubTokenFromStdin(explicit bool) (string, error) {
 		return token, nil
 	}
 	if !explicit {
-		return "", fmt.Errorf("no interactive terminal: set %s or pass --token-stdin with a token piped to stdin", hubTokenEnvVar)
+		return "", fmt.Errorf(
+			"no interactive terminal: set %s or pass --token-stdin with a token piped to stdin", hubTokenEnvVar)
 	}
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil && line == "" {
@@ -194,7 +203,7 @@ func readHubTokenFromStdin(explicit bool) (string, error) {
 	return token, nil
 }
 
-func newHubLogoutCommand(cfg *kaiConfig) *cobra.Command {
+func newHubLogoutCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Remove the saved Tackle Hub token",
@@ -207,7 +216,7 @@ func newHubLogoutCommand(cfg *kaiConfig) *cobra.Command {
 			if err := deleteHubToken(dir); err != nil {
 				return err
 			}
-			fmt.Fprintln(os.Stdout, "logged out; saved Hub token removed")
+			_, _ = fmt.Fprintln(os.Stdout, "logged out; saved Hub token removed")
 			return nil
 		},
 	}

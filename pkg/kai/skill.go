@@ -12,6 +12,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const (
+	// skillTypeSkill is the default SkillCard type value.
+	skillTypeSkill = "skill"
+	// sourceImage identifies the "image" source/populate mode and the image
+	// field label used across the skill wizard.
+	sourceImage = "image"
+)
+
 func newSkillCommand(cfg *kaiConfig) *cobra.Command {
 	var collection bool
 	cmd := &cobra.Command{
@@ -32,7 +40,7 @@ func newSkillCommand(cfg *kaiConfig) *cobra.Command {
 func newSkillCreateCommand(cfg *kaiConfig, collection *bool) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
-		Use:   "create [name]",
+		Use:   useCreate,
 		Short: "Create a SkillCard (or SkillCollection) via an interactive wizard",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -60,12 +68,12 @@ func runSkillCardCreate(ctx context.Context, cfg *kaiConfig, name string, dryRun
 	}
 
 	nameVal := name
-	mode := "image"
+	mode := sourceImage
 	fields := []huh.Field{}
 	if name == "" {
 		fields = append(fields, inputField("SkillCard name", "javaee-to-quarkus", &nameVal, requiredValidator("name")))
 	}
-	fields = append(fields, selectField("Source", []string{"image", "source", "inline"}, &mode))
+	fields = append(fields, selectField("Source", []string{sourceImage, "source", "inline"}, &mode))
 	if err := runForm(fields...); err != nil {
 		return err
 	}
@@ -74,9 +82,9 @@ func runSkillCardCreate(ctx context.Context, cfg *kaiConfig, name string, dryRun
 	spec := agenticv1alpha1.SkillCardSpec{}
 	var subPath, ref string
 	switch mode {
-	case "image":
+	case sourceImage:
 		if err := runForm(
-			inputField("Image (OCI ref)", "quay.io/konveyor/skills:latest", &spec.Image, requiredValidator("image")),
+			inputField("Image (OCI ref)", "quay.io/konveyor/skills:latest", &spec.Image, requiredValidator(sourceImage)),
 			inputField("SubPath (optional)", "", &subPath, nil),
 		); err != nil {
 			return err
@@ -99,13 +107,13 @@ func runSkillCardCreate(ctx context.Context, cfg *kaiConfig, name string, dryRun
 	spec.SubPath = strings.TrimSpace(subPath)
 	spec.Ref = strings.TrimSpace(ref)
 
-	skillType := "skill"
+	skillType := skillTypeSkill
 	var displayName, version, description, tags string
 	if err := runForm(
 		inputField("Display name (optional)", "", &displayName, nil),
 		inputField("Version (optional)", "", &version, nil),
 		inputField("Description (optional)", "", &description, nil),
-		selectField("Type", []string{"skill", "rule"}, &skillType),
+		selectField("Type", []string{skillTypeSkill, "rule"}, &skillType),
 		inputField("Tags (comma-separated, optional)", "java,quarkus", &tags, nil),
 	); err != nil {
 		return err
@@ -134,14 +142,14 @@ func runSkillCollectionCreate(ctx context.Context, cfg *kaiConfig, name string, 
 	}
 
 	nameVal := name
-	mode := "image"
+	mode := sourceImage
 	version := ""
 	fields := []huh.Field{}
 	if name == "" {
 		fields = append(fields, inputField("SkillCollection name", "java-migration", &nameVal, requiredValidator("name")))
 	}
 	fields = append(fields,
-		selectField("Populate from", []string{"image", "skill references"}, &mode),
+		selectField("Populate from", []string{sourceImage, "skill references"}, &mode),
 		inputField("Version (optional)", "", &version, nil),
 	)
 	if err := runForm(fields...); err != nil {
@@ -150,11 +158,11 @@ func runSkillCollectionCreate(ctx context.Context, cfg *kaiConfig, name string, 
 	name = strings.TrimSpace(nameVal)
 
 	spec := agenticv1alpha1.SkillCollectionSpec{Version: strings.TrimSpace(version)}
-	if mode == "image" {
-		skillType := "skill"
+	if mode == sourceImage {
+		skillType := skillTypeSkill
 		if err := runForm(
-			inputField("Image (OCI ref)", "quay.io/konveyor/skills:latest", &spec.Image, requiredValidator("image")),
-			selectField("Default type for enumerated skills", []string{"skill", "rule"}, &skillType),
+			inputField("Image (OCI ref)", "quay.io/konveyor/skills:latest", &spec.Image, requiredValidator(sourceImage)),
+			selectField("Default type for enumerated skills", []string{skillTypeSkill, "rule"}, &skillType),
 		); err != nil {
 			return err
 		}
@@ -165,7 +173,9 @@ func runSkillCollectionCreate(ctx context.Context, cfg *kaiConfig, name string, 
 			return err
 		}
 		if len(existing) == 0 {
-			return fmt.Errorf("no SkillCards found in namespace %q to reference; create some first or use --collection with an image", cfg.namespace)
+			return fmt.Errorf(
+				"no SkillCards found in namespace %q to reference; create some first or use --collection with an image",
+				cfg.namespace)
 		}
 		skills, err := collectCollectionSkills(existing)
 		if err != nil {
@@ -216,7 +226,7 @@ func collectCollectionSkills(cards []string) ([]agenticv1alpha1.SkillCollectionS
 
 func splitTags(s string) []string {
 	var out []string
-	for _, t := range strings.Split(s, ",") {
+	for t := range strings.SplitSeq(s, ",") {
 		if t = strings.TrimSpace(t); t != "" {
 			out = append(out, t)
 		}
@@ -226,7 +236,7 @@ func splitTags(s string) []string {
 
 func newSkillEditCommand(cfg *kaiConfig, collection *bool) *cobra.Command {
 	return &cobra.Command{
-		Use:   "edit <name>",
+		Use:   useEdit,
 		Short: "Edit a SkillCard (or SkillCollection) in your $EDITOR",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -248,7 +258,7 @@ func newSkillEditCommand(cfg *kaiConfig, collection *bool) *cobra.Command {
 func newSkillDeleteCommand(cfg *kaiConfig, collection *bool) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "delete <name>",
+		Use:   useDelete,
 		Short: "Delete a SkillCard (or SkillCollection)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -273,7 +283,7 @@ func newSkillDeleteCommand(cfg *kaiConfig, collection *bool) *cobra.Command {
 
 func newSkillListCommand(cfg *kaiConfig, collection *bool) *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
+		Use:   useList,
 		Short: "List SkillCards (or SkillCollections)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -295,7 +305,7 @@ func listSkillCards(cmd *cobra.Command, cl client.Client, namespace string) erro
 		return fmt.Errorf("failed to list skillcards: %w", err)
 	}
 	if len(list.Items) == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "no skillcards found in namespace %q\n", namespace)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no skillcards found in namespace %q\n", namespace)
 		return nil
 	}
 	rows := make([][]string, 0, len(list.Items))
@@ -305,11 +315,11 @@ func listSkillCards(cmd *cobra.Command, cl client.Client, namespace string) erro
 			s.Name,
 			string(s.Spec.Type),
 			s.Status.DeliveryMode,
-			conditionStatus(s.Status.Conditions, "Ready"),
+			readyStatus(s.Status.Conditions),
 			age(s.CreationTimestamp),
 		})
 	}
-	table(cmd.OutOrStdout(), []string{"NAME", "TYPE", "DELIVERY", "READY", "AGE"}, rows)
+	table(cmd.OutOrStdout(), []string{colName, "TYPE", "DELIVERY", colReady, colAge}, rows)
 	return nil
 }
 
@@ -319,7 +329,7 @@ func listSkillCollections(cmd *cobra.Command, cl client.Client, namespace string
 		return fmt.Errorf("failed to list skillcollections: %w", err)
 	}
 	if len(list.Items) == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "no skillcollections found in namespace %q\n", namespace)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no skillcollections found in namespace %q\n", namespace)
 		return nil
 	}
 	rows := make([][]string, 0, len(list.Items))
@@ -328,10 +338,10 @@ func listSkillCollections(cmd *cobra.Command, cl client.Client, namespace string
 		rows = append(rows, []string{
 			s.Name,
 			fmt.Sprintf("%d", len(s.Status.ResolvedSkills)),
-			conditionStatus(s.Status.Conditions, "Ready"),
+			readyStatus(s.Status.Conditions),
 			age(s.CreationTimestamp),
 		})
 	}
-	table(cmd.OutOrStdout(), []string{"NAME", "SKILLS", "READY", "AGE"}, rows)
+	table(cmd.OutOrStdout(), []string{colName, "SKILLS", colReady, colAge}, rows)
 	return nil
 }

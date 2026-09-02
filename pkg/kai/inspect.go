@@ -28,7 +28,7 @@ func newKVPrinter(w io.Writer) *kvPrinter {
 }
 
 func (p *kvPrinter) kv(key, value string) {
-	fmt.Fprintf(p.tw, "%s:\t%s\n", key, value)
+	_, _ = fmt.Fprintf(p.tw, "%s:\t%s\n", key, value)
 }
 
 func (p *kvPrinter) flush() { _ = p.tw.Flush() }
@@ -36,27 +36,29 @@ func (p *kvPrinter) flush() { _ = p.tw.Flush() }
 // section prints a blank-line-separated heading directly to the underlying
 // writer (outside the aligned block).
 func section(w io.Writer, title string) {
-	fmt.Fprintf(w, "\n%s\n", title)
+	_, _ = fmt.Fprintf(w, "\n%s\n", title)
 }
 
 // printConditions renders a resource's status conditions in a readable block.
 func printConditions(w io.Writer, conditions []metav1.Condition) {
 	if len(conditions) == 0 {
-		fmt.Fprintln(w, "  <none>")
+		_, _ = fmt.Fprintln(w, "  <none>")
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "  TYPE\tSTATUS\tREASON\tMESSAGE")
+	_, _ = fmt.Fprintln(tw, "  TYPE\tSTATUS\tREASON\tMESSAGE")
 	for i := range conditions {
 		c := conditions[i]
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", c.Type, c.Status, c.Reason, c.Message)
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", c.Type, c.Status, c.Reason, c.Message)
 	}
 	_ = tw.Flush()
 }
 
 // latestAgentRun returns the most recently created AgentRun that targets the
 // named agent, or nil when the agent has never been run.
-func latestAgentRun(ctx context.Context, cl client.Client, namespace, agentName string) (*agenticv1alpha1.AgentRun, error) {
+func latestAgentRun(
+	ctx context.Context, cl client.Client, namespace, agentName string,
+) (*agenticv1alpha1.AgentRun, error) {
 	var list agenticv1alpha1.AgentRunList
 	if err := cl.List(ctx, &list, client.InNamespace(namespace)); err != nil {
 		return nil, err
@@ -76,7 +78,9 @@ func latestAgentRun(ctx context.Context, cl client.Client, namespace, agentName 
 
 // latestWorkflowRun returns the most recently created AgentWorkflowRun that
 // targets the named workflow, or nil when it has never been run.
-func latestWorkflowRun(ctx context.Context, cl client.Client, namespace, workflowName string) (*agenticv1alpha1.AgentWorkflowRun, error) {
+func latestWorkflowRun(
+	ctx context.Context, cl client.Client, namespace, workflowName string,
+) (*agenticv1alpha1.AgentWorkflowRun, error) {
 	var list agenticv1alpha1.AgentWorkflowRunList
 	if err := cl.List(ctx, &list, client.InNamespace(namespace)); err != nil {
 		return nil, err
@@ -106,7 +110,7 @@ func podLogs(ctx context.Context, cs *kubernetes.Clientset, namespace, podName s
 	if err != nil {
 		return "", err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	data, err := io.ReadAll(rc)
 	if err != nil {
 		return "", err

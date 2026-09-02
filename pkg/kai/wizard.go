@@ -116,5 +116,14 @@ func readableFileValidator(s string) error {
 	if info.IsDir() {
 		return fmt.Errorf("%q is a directory, not a file", s)
 	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%q is not a regular file", s)
+	}
+	// Confirm the file is actually readable, not just present.
+	f, err := os.Open(s)
+	if err != nil {
+		return fmt.Errorf("cannot read file: %w", err)
+	}
+	_ = f.Close()
 	return nil
 }

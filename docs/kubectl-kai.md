@@ -68,7 +68,9 @@ kubectl kai workflow run github-issue-triage \
 `--app` sets `APP_ID` and points the run at Hub via `HUB_BASE_URL`
 (default `http://tackle-hub.konveyor-tackle.svc:8080`, override with `--hub-url`),
 and wires the `github-credentials` Secret (`GH_TOKEN`) in as `envFrom` so the run
-can push. Override the credential Secret with `--git-secret` (empty to skip), set
+can push. Note this run `--hub-url` is the **in-cluster** address the sandbox pod
+reaches Hub on — distinct from the **external** Route you pass to `hub login`; the
+token minted by login is portable across both, so it need not be repeated per run. Override the credential Secret with `--git-secret` (empty to skip), set
 `TARGET_BRANCH` with `--target-branch`, and pass anything else through with
 repeatable `--env NAME=VALUE` and `--env-from SECRET` flags. Without `--app`, runs
 stay clean — nothing is injected unless you ask for it.

@@ -9,11 +9,31 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// conditionStatus returns the status of the named condition (e.g. "Ready") from
-// a slice of standard metav1.Conditions, or "Unknown" when absent.
-func conditionStatus(conditions []metav1.Condition, name string) string {
+// Shared cobra command "Use" strings, reused across the resource command groups
+// (gateway, agent, workflow, skill) so the verbs stay consistent.
+const (
+	useCreate   = "create [name]"
+	useEdit     = "edit <name>"
+	useDelete   = "delete <name>"
+	useList     = "list"
+	useGet      = "get <name>"
+	useDescribe = "describe <name>"
+)
+
+// Shared table column headers reused across listing commands.
+const (
+	colName     = "NAME"
+	colReady    = "READY"
+	colPhase    = "PHASE"
+	colAge      = "AGE"
+	colRequired = "REQUIRED"
+)
+
+// readyStatus returns the status of the "Ready" condition from a slice of
+// standard metav1.Conditions, or "Unknown" when absent.
+func readyStatus(conditions []metav1.Condition) string {
 	for i := range conditions {
-		if conditions[i].Type == name {
+		if conditions[i].Type == "Ready" {
 			return string(conditions[i].Status)
 		}
 	}
@@ -26,6 +46,9 @@ func age(t metav1.Time) string {
 		return "<unknown>"
 	}
 	d := time.Since(t.Time)
+	if d < 0 {
+		return "0s"
+	}
 	switch {
 	case d < time.Minute:
 		return fmt.Sprintf("%ds", int(d.Seconds()))
@@ -52,9 +75,9 @@ func table(w io.Writer, header []string, rows [][]string) {
 func writeRow(w io.Writer, cols []string) {
 	for i, c := range cols {
 		if i > 0 {
-			fmt.Fprint(w, "\t")
+			_, _ = fmt.Fprint(w, "\t")
 		}
-		fmt.Fprint(w, c)
+		_, _ = fmt.Fprint(w, c)
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 }

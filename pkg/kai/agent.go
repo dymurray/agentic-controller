@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -14,6 +15,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
+)
+
+// Agent parameter type values (mirrors agenticv1alpha1.ParamType).
+const (
+	paramTypeString  = "string"
+	paramTypeNumber  = "number"
+	paramTypeBoolean = "boolean"
 )
 
 func newAgentCommand(cfg *kaiConfig) *cobra.Command {
@@ -36,7 +44,7 @@ func newAgentCommand(cfg *kaiConfig) *cobra.Command {
 func newAgentCreateCommand(cfg *kaiConfig) *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
-		Use:   "create [name]",
+		Use:   useCreate,
 		Short: "Create an Agent via an interactive wizard",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -65,7 +73,8 @@ func runAgentCreate(ctx context.Context, cfg *kaiConfig, name string, dryRun boo
 		return fmt.Errorf("failed to list gateways: %w", err)
 	}
 	if len(gateways) == 0 {
-		return fmt.Errorf("no gateways found in namespace %q; create one first with 'kubectl kai gateway create'", cfg.namespace)
+		return fmt.Errorf("no gateways found in namespace %q; create one first with 'kubectl kai gateway create'",
+			cfg.namespace)
 	}
 	cards, err := skillCardNames(ctx, cl, cfg.namespace)
 	if err != nil {
@@ -86,7 +95,7 @@ func runAgentCreate(ctx context.Context, cfg *kaiConfig, name string, dryRun boo
 		fields = append(fields, inputField("Agent name", "my-agent", &nameVal, requiredValidator("name")))
 	}
 	fields = append(fields,
-		inputField("Container image", "quay.io/konveyor/my-agent:latest", &image, requiredValidator("image")),
+		inputField("Container image", "quay.io/konveyor/my-agent:latest", &image, requiredValidator(sourceImage)),
 		huh.NewMultiSelect[string]().
 			Title("Gateways (select at least one)").
 			Options(huh.NewOptions(gateways...)...).
@@ -156,14 +165,14 @@ func collectParams() ([]agenticv1alpha1.Param, error) {
 		}
 		var (
 			pName string
-			pType = "string"
+			pType = paramTypeString
 			pDesc string
 			pDef  string
 			pReq  bool
 		)
 		if err := runForm(
 			inputField("Parameter name", "TARGET_BRANCH", &pName, requiredValidator("parameter name")),
-			selectField("Type", []string{"string", "number", "boolean"}, &pType),
+			selectField("Type", []string{paramTypeString, paramTypeNumber, paramTypeBoolean}, &pType),
 			inputField("Description (optional)", "", &pDesc, nil),
 			inputField("Default value (optional)", "", &pDef, nil),
 			huh.NewConfirm().Title("Required?").Value(&pReq),
@@ -187,7 +196,7 @@ func collectParams() ([]agenticv1alpha1.Param, error) {
 
 func newAgentEditCommand(cfg *kaiConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "edit <name>",
+		Use:   useEdit,
 		Short: "Edit an Agent in your $EDITOR",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -204,7 +213,7 @@ func newAgentEditCommand(cfg *kaiConfig) *cobra.Command {
 func newAgentDeleteCommand(cfg *kaiConfig) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "delete <name>",
+		Use:   useDelete,
 		Short: "Delete an Agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -222,7 +231,7 @@ func newAgentDeleteCommand(cfg *kaiConfig) *cobra.Command {
 
 func newAgentListCommand(cfg *kaiConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
+		Use:   useList,
 		Short: "List Agents",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -235,7 +244,7 @@ func newAgentListCommand(cfg *kaiConfig) *cobra.Command {
 				return fmt.Errorf("failed to list agents: %w", err)
 			}
 			if len(list.Items) == 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "no agents found in namespace %q\n", cfg.namespace)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no agents found in namespace %q\n", cfg.namespace)
 				return nil
 			}
 			rows := make([][]string, 0, len(list.Items))
@@ -249,11 +258,11 @@ func newAgentListCommand(cfg *kaiConfig) *cobra.Command {
 					a.Name,
 					a.Spec.Image,
 					strings.Join(gws, ","),
-					conditionStatus(a.Status.Conditions, "Ready"),
+					readyStatus(a.Status.Conditions),
 					age(a.CreationTimestamp),
 				})
 			}
-			table(cmd.OutOrStdout(), []string{"NAME", "IMAGE", "GATEWAYS", "READY", "AGE"}, rows)
+			table(cmd.OutOrStdout(), []string{colName, "IMAGE", "GATEWAYS", colReady, colAge}, rows)
 			return nil
 		},
 	}
@@ -290,7 +299,10 @@ func newAgentRunCommand(cfg *kaiConfig) *cobra.Command {
 	return cmd
 }
 
-func runAgentRun(ctx context.Context, cfg *kaiConfig, name, gateway, instructions string, paramFlags []string, wait bool, env []corev1.EnvVar, envFrom []corev1.EnvFromSource) error {
+func runAgentRun(
+	ctx context.Context, cfg *kaiConfig, name, gateway, instructions string,
+	paramFlags []string, wait bool, env []corev1.EnvVar, envFrom []corev1.EnvFromSource,
+) error {
 	cl, err := cfg.newClient()
 	if err != nil {
 		return err
@@ -354,10 +366,10 @@ func runAgentRun(ctx context.Context, cfg *kaiConfig, name, gateway, instruction
 	if err := cl.Create(ctx, run); err != nil {
 		return fmt.Errorf("failed to create AgentRun: %w", err)
 	}
-	fmt.Fprintf(os.Stdout, "agent run %q created\n", run.Name)
+	_, _ = fmt.Fprintf(os.Stdout, "agent run %q created\n", run.Name)
 
 	if wait {
-		fmt.Fprintln(os.Stdout, "waiting for run to complete...")
+		_, _ = fmt.Fprintln(os.Stdout, "waiting for run to complete...")
 		return waitForRun(ctx, cl, run, func() agenticv1alpha1.AgentRunPhase { return run.Status.Phase })
 	}
 	return nil
@@ -366,7 +378,9 @@ func runAgentRun(ctx context.Context, cfg *kaiConfig, name, gateway, instruction
 // resolveRunParams builds AgentRun params for each declared Agent param, using
 // provided values, prompting interactively when missing, and enforcing that
 // required params get a value.
-func resolveRunParams(declared []agenticv1alpha1.Param, provided map[string]string) ([]agenticv1alpha1.ParamValue, error) {
+func resolveRunParams(
+	declared []agenticv1alpha1.Param, provided map[string]string,
+) ([]agenticv1alpha1.ParamValue, error) {
 	var out []agenticv1alpha1.ParamValue
 	for _, p := range declared {
 		value, ok := provided[p.Name]
@@ -391,6 +405,11 @@ func resolveRunParams(declared []agenticv1alpha1.Param, provided map[string]stri
 				}
 			}
 		}
+		// A required param must resolve to a non-empty value, including when it
+		// was supplied explicitly but empty (e.g. --param REQUIRED=).
+		if p.Required && strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("missing required parameter %q (provide with --param %s=<value>)", p.Name, p.Name)
+		}
 		if err := validateParamValue(p, value); err != nil {
 			return nil, err
 		}
@@ -408,11 +427,11 @@ func validateParamValue(p agenticv1alpha1.Param, value string) error {
 		return nil
 	}
 	switch p.Type {
-	case "number":
+	case paramTypeNumber:
 		if _, err := strconv.ParseFloat(value, 64); err != nil {
 			return fmt.Errorf("parameter %q must be a number, got %q", p.Name, value)
 		}
-	case "boolean":
+	case paramTypeBoolean:
 		if _, err := strconv.ParseBool(value); err != nil {
 			return fmt.Errorf("parameter %q must be a boolean, got %q", p.Name, value)
 		}
@@ -433,37 +452,34 @@ func parseParamFlags(flags []string) (map[string]string, error) {
 }
 
 func contains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s, v)
 }
 
 // previewAndCreate prints the YAML of obj, asks for confirmation (unless
 // dryRun), and creates it.
-func previewAndCreate(ctx context.Context, cl client.Client, obj client.Object, name, kind, namespace string, dryRun bool) error {
+func previewAndCreate(
+	ctx context.Context, cl client.Client, obj client.Object, name, kind, namespace string, dryRun bool,
+) error {
 	data, err := yaml.Marshal(obj)
 	if err != nil {
 		return err
 	}
 	if dryRun {
-		fmt.Fprintln(os.Stdout, string(data))
+		_, _ = fmt.Fprintln(os.Stdout, string(data))
 		return nil
 	}
-	fmt.Fprintln(os.Stdout, "\n"+string(data))
+	_, _ = fmt.Fprintln(os.Stdout, "\n"+string(data))
 	proceed, err := confirm(fmt.Sprintf("Create %s %q in namespace %q?", kind, name, namespace), true)
 	if err != nil {
 		return err
 	}
 	if !proceed {
-		fmt.Fprintln(os.Stdout, "aborted")
+		_, _ = fmt.Fprintln(os.Stdout, "aborted")
 		return nil
 	}
 	if err := cl.Create(ctx, obj); err != nil {
 		return fmt.Errorf("failed to create %s: %w", kind, err)
 	}
-	fmt.Fprintf(os.Stdout, "%s %q created\n", kind, name)
+	_, _ = fmt.Fprintf(os.Stdout, "%s %q created\n", kind, name)
 	return nil
 }
