@@ -50,14 +50,18 @@ func collectSecretValues(fields []credentialField) (map[string]string, error) {
 }
 
 // resolveCredentials determines the credential Secret the Gateway will
-// reference. By default it creates the Secret inline — prompting only for the
+// reference. By default it collects an inline Secret — prompting only for the
 // credential values (masked), auto-naming the Secret, and using the provider's
 // default key — so the common path is dead simple. The user can instead choose
-// to reference an existing Secret by name. The returned bool reports whether a
-// Secret was created (so the caller can skip the missing-Secret warning).
+// to reference an existing Secret by name.
+//
+// It never persists anything: for the inline path the collected values are
+// returned as pendingData so the caller can create the Secret only after the
+// user confirms Gateway creation (and roll it back if that fails). pendingData is
+// nil when an existing Secret is referenced.
 func resolveCredentials(
-	ctx context.Context, cl client.Client, namespace, gatewayName string, p providerInfo, dryRun bool,
-) (secretName, key string, created bool, err error) {
+	gatewayName string, p providerInfo, dryRun bool,
+) (secretName, key string, pendingData map[string]string, err error) {
 	if p.CredentialMode == credentialModeSingleKey {
 		key = p.DefaultKeyName
 	}
@@ -65,29 +69,25 @@ func resolveCredentials(
 	// Dry-run never touches the cluster, so we can only reference a Secret.
 	if dryRun {
 		secretName, key, err = promptExistingSecret(p)
-		return secretName, key, false, err
+		return secretName, key, nil, err
 	}
 
 	create, err := confirm("Create the credential Secret now? (choose No to reference an existing Secret)", true)
 	if err != nil {
-		return "", "", false, err
+		return "", "", nil, err
 	}
 	if !create {
 		secretName, key, err = promptExistingSecret(p)
-		return secretName, key, false, err
+		return secretName, key, nil, err
 	}
 
 	secretName = generateSecretName(gatewayName)
 	fields := credentialFieldsFor(p, key)
 	values, err := collectSecretValues(fields)
 	if err != nil {
-		return "", "", false, err
+		return "", "", nil, err
 	}
-	if err := createOrUpdateSecret(ctx, cl, namespace, secretName, buildSecretData(fields, values)); err != nil {
-		return "", "", false, err
-	}
-	_, _ = fmt.Fprintf(os.Stdout, "secret %q created\n", secretName)
-	return secretName, key, true, nil
+	return secretName, key, buildSecretData(fields, values), nil
 }
 
 // promptExistingSecret asks for the name (and key, for single-key providers) of

@@ -13,16 +13,11 @@ import (
 // overridden with --hub-url.
 const defaultHubBaseURL = "http://tackle-hub.konveyor-tackle.svc:8080"
 
-// defaultGitSecret is the Secret carrying git push credentials (GH_TOKEN). It is
-// wired via envFrom onto application-scoped runs unless overridden. The Agent CR
-// cannot carry envFrom, so this must be set on every run that pushes.
-const defaultGitSecret = "github-credentials"
-
 // runContext holds the application/inventory context the CLI resolves into a
 // run's environment. The controller is domain-agnostic and injects nothing, so
-// APP_ID, the Hub endpoint, the target branch and the git-credentials Secret are
-// all expressed here as plain env / envFrom on the run spec. The user supplies
-// the application ID (which they know from the inventory); everything else is
+// APP_ID, the Hub endpoint, the target branch and any credential Secret are all
+// expressed here as plain env / envFrom on the run spec. The user supplies the
+// application ID (which they know from the inventory); everything else is
 // defaulted or passed through so a single --app is usually enough.
 type runContext struct {
 	appID        string
@@ -44,8 +39,9 @@ func (rc *runContext) addFlags(cmd *cobra.Command) {
 		"in-cluster Hub address the run pod uses as HUB_BASE_URL (applied with --app); "+
 			"distinct from the external route passed to 'hub login'")
 	f.StringVar(&rc.targetBranch, "target-branch", "", "TARGET_BRANCH for the run")
-	f.StringVar(&rc.gitSecret, "git-secret", defaultGitSecret,
-		"Secret providing git credentials (GH_TOKEN) via envFrom; empty to skip")
+	f.StringVar(&rc.gitSecret, "git-secret", "",
+		"Secret with git credentials to import via envFrom; off by default "+
+			"(the harness fetches source-control credentials from Hub)")
 	f.StringVar(&rc.hubToken, "hub-token", "",
 		"HUB_TOKEN for the run (overrides the token saved by 'hub login'; applied with --app)")
 	f.StringArrayVar(&rc.env, "env", nil, "additional environment variable as NAME=VALUE (repeatable)")
@@ -77,10 +73,11 @@ func (rc *runContext) resolveHubToken() error {
 }
 
 // build resolves the flags into env vars and envFrom sources for a run spec.
-// gitSecretChanged reports whether the user set --git-secret explicitly, so the
-// default git Secret is only wired onto application-scoped runs and a plain run
-// the user never opted into git for stays clean.
-func (rc *runContext) build(gitSecretChanged bool) ([]corev1.EnvVar, []corev1.EnvFromSource, error) {
+// No credential Secret is wired implicitly: the harness fetches source-control
+// credentials from Hub and does not consume GH_TOKEN, and a stale required
+// envFrom reference would keep the Sandbox pod from starting. A Secret is only
+// imported when the user asks for one via --git-secret or --env-from.
+func (rc *runContext) build() ([]corev1.EnvVar, []corev1.EnvFromSource, error) {
 	var env []corev1.EnvVar
 	if rc.appID != "" {
 		env = append(env, corev1.EnvVar{Name: "APP_ID", Value: rc.appID})
@@ -102,10 +99,9 @@ func (rc *runContext) build(gitSecretChanged bool) ([]corev1.EnvVar, []corev1.En
 		env = append(env, corev1.EnvVar{Name: strings.TrimSpace(name), Value: value})
 	}
 
-	// Wire the git-credentials Secret. Only default it onto application-scoped
-	// runs; if the user set --git-secret explicitly, honor it regardless.
+	// Import credential Secrets only when explicitly requested.
 	var secrets []string
-	if gitSecret := strings.TrimSpace(rc.gitSecret); gitSecret != "" && (gitSecretChanged || rc.appID != "") {
+	if gitSecret := strings.TrimSpace(rc.gitSecret); gitSecret != "" {
 		secrets = append(secrets, gitSecret)
 	}
 	secrets = append(secrets, rc.envFrom...)

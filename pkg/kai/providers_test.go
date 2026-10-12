@@ -1,6 +1,9 @@
 package kai
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // testSecretName is a placeholder credential Secret name used across tests.
 const testSecretName = "creds"
@@ -28,6 +31,8 @@ func TestValidateEndpoint(t *testing.T) {
 		{"no scheme", "api.anthropic.com", true},
 		{"ftp scheme", "ftp://example.com", true},
 		{"no host", "https://", true},
+		{"userinfo rejected", "https://user:token@example.com", true},
+		{"username-only userinfo rejected", "https://user@example.com", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -36,6 +41,23 @@ func TestValidateEndpoint(t *testing.T) {
 				t.Errorf("validateEndpoint(%q) error = %v, wantErr %v", tt.in, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestDefaultEndpointsProbeURL guards the Gateway-verification contract: the
+// controller probes "<endpoint>/v1/models", so a provider default endpoint must
+// be a valid https URL and must not already end in "/v1" (which would produce a
+// doubled "/v1/v1/models"). This is the regression that made the OpenAI default
+// "https://api.openai.com" rather than ".../v1".
+func TestDefaultEndpointsProbeURL(t *testing.T) {
+	for _, p := range supportedProviders {
+		if err := validateEndpoint(p.DefaultEndpoint); err != nil {
+			t.Errorf("provider %q default endpoint %q is invalid: %v", p.ID, p.DefaultEndpoint, err)
+		}
+		if strings.HasSuffix(strings.TrimRight(p.DefaultEndpoint, "/"), "/v1") {
+			t.Errorf("provider %q default endpoint %q ends in /v1; verification would probe a doubled /v1/v1/models",
+				p.ID, p.DefaultEndpoint)
+		}
 	}
 }
 

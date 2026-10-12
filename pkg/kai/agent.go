@@ -68,13 +68,12 @@ func runAgentCreate(ctx context.Context, cfg *kaiConfig, name string, dryRun boo
 		return err
 	}
 
+	// Gateways are optional: an Agent that declares none is unconstrained, and a
+	// run against it may name any ready Gateway. Offer a picker only when some
+	// exist; never require a selection.
 	gateways, err := gatewayNames(ctx, cl, cfg.namespace)
 	if err != nil {
 		return fmt.Errorf("failed to list gateways: %w", err)
-	}
-	if len(gateways) == 0 {
-		return fmt.Errorf("no gateways found in namespace %q; create one first with 'kubectl kai gateway create'",
-			cfg.namespace)
 	}
 	cards, err := skillCardNames(ctx, cl, cfg.namespace)
 	if err != nil {
@@ -96,18 +95,16 @@ func runAgentCreate(ctx context.Context, cfg *kaiConfig, name string, dryRun boo
 	}
 	fields = append(fields,
 		inputField("Container image", "quay.io/konveyor/my-agent:latest", &image, requiredValidator(sourceImage)),
-		huh.NewMultiSelect[string]().
-			Title("Gateways (select at least one)").
-			Options(huh.NewOptions(gateways...)...).
-			Validate(func(s []string) error {
-				if len(s) == 0 {
-					return fmt.Errorf("select at least one gateway")
-				}
-				return nil
-			}).
-			Value(&selectedGateways),
-		huh.NewText().Title("System prompt (optional)").Value(&prompt),
 	)
+	if len(gateways) > 0 {
+		fields = append(fields,
+			huh.NewMultiSelect[string]().
+				Title("Gateways (optional; leave empty to allow any)").
+				Options(huh.NewOptions(gateways...)...).
+				Value(&selectedGateways),
+		)
+	}
+	fields = append(fields, huh.NewText().Title("System prompt (optional)").Value(&prompt))
 	if err := runForm(fields...); err != nil {
 		return err
 	}
@@ -284,7 +281,7 @@ func newAgentRunCommand(cfg *kaiConfig) *cobra.Command {
 			if err := rc.resolveHubToken(); err != nil {
 				return err
 			}
-			env, envFrom, err := rc.build(cmd.Flags().Changed("git-secret"))
+			env, envFrom, err := rc.build()
 			if err != nil {
 				return err
 			}
@@ -318,18 +315,29 @@ func runAgentRun(
 		gwOptions = append(gwOptions, g.Ref)
 	}
 
-	// Resolve the gateway: honor the flag, else pick when unambiguous, else prompt.
-	if gateway != "" {
-		if !contains(gwOptions, gateway) {
-			return fmt.Errorf("gateway %q is not one of the agent's gateways: %s", gateway, strings.Join(gwOptions, ", "))
+	// Resolve the gateway, mirroring the controller's presence-gated allow-list.
+	gateway, needChoice, err := resolveAgentGateway(gwOptions, gateway)
+	if err != nil {
+		return err
+	}
+	if needChoice {
+		// The Agent declares several gateways (choose among them) or none at all
+		// (unconstrained — any ready Gateway in the namespace is allowed).
+		options := gwOptions
+		if len(options) == 0 {
+			options, err = gatewayNames(ctx, cl, cfg.namespace)
+			if err != nil {
+				return fmt.Errorf("failed to list gateways: %w", err)
+			}
 		}
-	} else if len(gwOptions) == 1 {
-		gateway = gwOptions[0]
-	} else if len(gwOptions) > 1 {
+		if len(options) == 0 {
+			return fmt.Errorf("no gateways found in namespace %q; create one with "+
+				"'kubectl kai gateway create' or pass --gateway", cfg.namespace)
+		}
 		if err := requireTerminal(); err != nil {
-			return fmt.Errorf("agent has multiple gateways; specify one with --gateway: %s", strings.Join(gwOptions, ", "))
+			return fmt.Errorf("select a gateway with --gateway: %s", strings.Join(options, ", "))
 		}
-		if err := runForm(selectField("Gateway", gwOptions, &gateway)); err != nil {
+		if err := runForm(selectField("Gateway", options, &gateway)); err != nil {
 			return err
 		}
 	}
@@ -375,12 +383,52 @@ func runAgentRun(
 	return nil
 }
 
+// resolveAgentGateway resolves the gateway for a run from the Agent's declared
+// gateway refs (gwOptions) and the user-supplied --gateway (provided). It mirrors
+// the controller's validateGateway contract, a presence-gated allow-list:
+//   - a non-empty declared set constrains the choice (membership is enforced);
+//   - an empty declared set is unconstrained (any gateway name is accepted).
+//
+// It returns the resolved gateway and whether the caller must still prompt the
+// user to choose one (true when no --gateway was given and the Agent declares
+// zero or several gateways).
+func resolveAgentGateway(gwOptions []string, provided string) (gateway string, needChoice bool, err error) {
+	if provided != "" {
+		// Only enforce allow-list membership when the Agent constrains gateways.
+		if len(gwOptions) > 0 && !contains(gwOptions, provided) {
+			return "", false, fmt.Errorf("gateway %q is not one of the agent's gateways: %s",
+				provided, strings.Join(gwOptions, ", "))
+		}
+		return provided, false, nil
+	}
+	if len(gwOptions) == 1 {
+		return gwOptions[0], false, nil
+	}
+	return "", true, nil
+}
+
 // resolveRunParams builds AgentRun params for each declared Agent param, using
 // provided values, prompting interactively when missing, and enforcing that
-// required params get a value.
+// required params get a value. Provided keys that the Agent does not declare are
+// rejected rather than silently dropped.
 func resolveRunParams(
 	declared []agenticv1alpha1.Param, provided map[string]string,
 ) ([]agenticv1alpha1.ParamValue, error) {
+	declaredNames := make(map[string]struct{}, len(declared))
+	for _, p := range declared {
+		declaredNames[p.Name] = struct{}{}
+	}
+	for name := range provided {
+		if _, ok := declaredNames[name]; !ok {
+			names := make([]string, 0, len(declared))
+			for _, p := range declared {
+				names = append(names, p.Name)
+			}
+			slices.Sort(names)
+			return nil, fmt.Errorf("unknown parameter %q (agent declares: %s)", name, strings.Join(names, ", "))
+		}
+	}
+
 	var out []agenticv1alpha1.ParamValue
 	for _, p := range declared {
 		value, ok := provided[p.Name]

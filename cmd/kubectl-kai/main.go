@@ -19,9 +19,10 @@ limitations under the License.
 // operators an interactive way to manage this project's agentic CRDs (Gateways,
 // Agents, Workflows and Skills) against the cluster in their KUBECONFIG.
 //
-// Install it by putting the built binary on PATH:
+// Install it by building the binary and putting it on PATH:
 //
-//	go install github.com/konveyor/agentic-controller/cmd/kubectl-kai@latest
+//	make kubectl-kai-build
+//	sudo install bin/kubectl-kai /usr/local/bin/kubectl-kai
 //	kubectl kai gateway create
 //
 // The command tree lives in the reusable pkg/kai package, so other tools can

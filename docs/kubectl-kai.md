@@ -10,18 +10,15 @@ example `kantra`) can embed the same commands under their own root.
 
 ## Install
 
-Build the binary and put it on your `PATH`:
+Check out the repository, build the binary, and put it on your `PATH`:
 
 ```sh
 make kubectl-kai-build           # produces bin/kubectl-kai
 sudo install bin/kubectl-kai /usr/local/bin/kubectl-kai
 ```
 
-Or install directly with Go:
-
-```sh
-go install github.com/konveyor/agentic-controller/cmd/kubectl-kai@latest
-```
+(`go install ...@latest` is not supported yet: the module uses a local
+`replace` on the `api` submodule, so it must be built from a checkout.)
 
 Verify kubectl discovers it:
 
@@ -66,14 +63,18 @@ kubectl kai workflow run github-issue-triage \
 ```
 
 `--app` sets `APP_ID` and points the run at Hub via `HUB_BASE_URL`
-(default `http://tackle-hub.konveyor-tackle.svc:8080`, override with `--hub-url`),
-and wires the `github-credentials` Secret (`GH_TOKEN`) in as `envFrom` so the run
-can push. Note this run `--hub-url` is the **in-cluster** address the sandbox pod
-reaches Hub on — distinct from the **external** Route you pass to `hub login`; the
-token minted by login is portable across both, so it need not be repeated per run. Override the credential Secret with `--git-secret` (empty to skip), set
-`TARGET_BRANCH` with `--target-branch`, and pass anything else through with
-repeatable `--env NAME=VALUE` and `--env-from SECRET` flags. Without `--app`, runs
-stay clean — nothing is injected unless you ask for it.
+(default `http://tackle-hub.konveyor-tackle.svc:8080`, override with `--hub-url`).
+Note this run `--hub-url` is the **in-cluster** address the sandbox pod reaches
+Hub on — distinct from the **external** Route you pass to `hub login`; the token
+minted by login is portable across both, so it need not be repeated per run.
+
+No credential Secret is wired implicitly: the harness fetches source-control
+credentials from Hub, and a stale required `envFrom` reference would keep the
+Sandbox pod from starting. Import a Secret explicitly with `--git-secret <name>`
+(or the repeatable `--env-from SECRET`) when you need one. Set `TARGET_BRANCH`
+with `--target-branch`, and pass anything else through with repeatable
+`--env NAME=VALUE`. Without `--app`, runs stay clean — nothing is injected unless
+you ask for it.
 
 ### Hub login
 

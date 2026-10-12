@@ -69,9 +69,13 @@ var supportedProviders = []providerInfo{
 		DefaultKeyName:  keyAPIKey,
 	},
 	{
-		ID:              "openai",
-		DisplayName:     "OpenAI",
-		DefaultEndpoint: "https://api.openai.com/v1",
+		ID:          "openai",
+		DisplayName: "OpenAI",
+		// No "/v1" suffix: Gateway verification probes "<endpoint>/v1/models" and
+		// the harness forwards the endpoint to Goose as OPENAI_HOST (whose request
+		// paths already include "v1/"). A "/v1" here would double it to
+		// "/v1/v1/models". This matches the Gateway sample and the harness default.
+		DefaultEndpoint: "https://api.openai.com",
 		CredentialMode:  credentialModeSingleKey,
 		DefaultKeyName:  keyAPIKey,
 	},
@@ -155,6 +159,11 @@ func validateEndpoint(endpoint string) error {
 	}
 	if u.Host == "" {
 		return fmt.Errorf("endpoint must include a host")
+	}
+	// Reject embedded userinfo (https://user:token@host): it would leak a
+	// credential into spec.endpoint and the Gateway YAML.
+	if u.User != nil {
+		return fmt.Errorf("endpoint must not contain userinfo (credentials in the URL)")
 	}
 	return nil
 }

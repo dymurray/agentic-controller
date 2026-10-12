@@ -98,6 +98,14 @@ func runHubLogin(hubURL, issuerURL, clientID string, lifespan int, insecure, tok
 	if strings.TrimSpace(issuerURL) == "" {
 		issuerURL = deriveIssuerURL(hubURL)
 	}
+	// The issuer carries the OIDC device-flow exchange and token polling, so it
+	// must be https too. A derived issuer is already https; an explicit
+	// --issuer-url is validated here before any OIDC request is made.
+	if u, err := url.Parse(strings.TrimSpace(issuerURL)); err != nil {
+		return fmt.Errorf("invalid --issuer-url %q: %w", issuerURL, err)
+	} else if u.Scheme != schemeHTTPS {
+		return fmt.Errorf("--issuer-url must use https (got %q); use --insecure for a self-signed certificate", issuerURL)
+	}
 	if strings.TrimSpace(clientID) == "" {
 		clientID = defaultOIDCClientID
 	}

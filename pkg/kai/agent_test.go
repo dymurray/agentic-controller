@@ -90,3 +90,48 @@ func TestResolveRunParams_NonInteractive(t *testing.T) {
 		t.Errorf("expected empty optional param to be dropped, got %q", got["OPTIONAL_EMPTY"])
 	}
 }
+
+// TestResolveRunParams_UnknownParam ensures a --param the Agent does not declare
+// is rejected instead of silently dropped.
+func TestResolveRunParams_UnknownParam(t *testing.T) {
+	declared := []agenticv1alpha1.Param{{Name: "KNOWN", Type: paramTypeString}}
+	if _, err := resolveRunParams(declared, map[string]string{"UNKNOWN": "x"}); err == nil {
+		t.Error("expected error for an undeclared parameter name")
+	}
+}
+
+func TestResolveAgentGateway(t *testing.T) {
+	tests := []struct {
+		name       string
+		gwOptions  []string
+		provided   string
+		wantGW     string
+		wantChoice bool
+		wantErr    bool
+	}{
+		// An unconstrained Agent (no declared gateways) must accept any --gateway.
+		{"unconstrained accepts provided", nil, "ready-gw", "ready-gw", false, false},
+		{"constrained accepts member", []string{"a", "b"}, "a", "a", false, false},
+		{"constrained rejects non-member", []string{"a", "b"}, "c", "", false, true},
+		{"single declared defaults", []string{"only"}, "", "only", false, false},
+		{"several declared need choice", []string{"a", "b"}, "", "", true, false},
+		{"none declared no flag needs choice", nil, "", "", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gw, needChoice, err := resolveAgentGateway(tt.gwOptions, tt.provided)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("resolveAgentGateway() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			if gw != tt.wantGW {
+				t.Errorf("gateway = %q, want %q", gw, tt.wantGW)
+			}
+			if needChoice != tt.wantChoice {
+				t.Errorf("needChoice = %v, want %v", needChoice, tt.wantChoice)
+			}
+		})
+	}
+}

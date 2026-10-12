@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -40,15 +41,37 @@ func editResource(ctx context.Context, cl client.Client, obj client.Object) erro
 		return nil
 	}
 
-	if err := yaml.Unmarshal(edited, obj); err != nil {
-		return fmt.Errorf("edited YAML is invalid: %w", err)
+	updated, err := applyEdit(obj, edited)
+	if err != nil {
+		return err
 	}
 
-	if err := cl.Update(ctx, obj); err != nil {
+	if err := cl.Update(ctx, updated); err != nil {
 		return fmt.Errorf("failed to apply changes: %w", err)
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "%s updated\n", key.Name)
 	return nil
+}
+
+// applyEdit decodes the edited YAML into a fresh zero-valued object of the same
+// concrete type as current. Decoding into a new object (rather than mutating the
+// fetched one) is what makes field deletions take effect: sigs.k8s.io/yaml skips
+// fields absent from the document, so a field cleared in the editor would
+// otherwise keep its fetched value. The object's identity and resourceVersion are
+// restored from current so the update targets the right object under optimistic
+// concurrency even if the user edited those out.
+func applyEdit(current client.Object, edited []byte) (client.Object, error) {
+	fresh, ok := reflect.New(reflect.TypeOf(current).Elem()).Interface().(client.Object)
+	if !ok {
+		return nil, fmt.Errorf("cannot build an empty %T to decode into", current)
+	}
+	if err := yaml.Unmarshal(edited, fresh); err != nil {
+		return nil, fmt.Errorf("edited YAML is invalid: %w", err)
+	}
+	fresh.SetName(current.GetName())
+	fresh.SetNamespace(current.GetNamespace())
+	fresh.SetResourceVersion(current.GetResourceVersion())
+	return fresh, nil
 }
 
 // openInEditor writes content to a temporary file, opens it in $EDITOR (falling

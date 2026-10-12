@@ -123,17 +123,18 @@ func runGatewayCreate(ctx context.Context, cfg *kaiConfig, name string, dryRun b
 		return err
 	}
 
-	// Credentials: by default create a Secret inline (just prompt for the
+	// Credentials: by default collect a Secret inline (just prompt for the
 	// values, auto-name the Secret, use the provider's default key). The user
-	// can instead reference a Secret they created themselves.
-	secretName, key, secretCreated, err := resolveCredentials(ctx, cl, cfg.namespace, name, p, dryRun)
+	// can instead reference a Secret they created themselves. Nothing is
+	// persisted yet — an inline Secret is created only after final confirmation.
+	secretName, key, pendingSecret, err := resolveCredentials(name, p, dryRun)
 	if err != nil {
 		return err
 	}
 	if err := validateCredentialRef(p, secretName, key); err != nil {
 		return err
 	}
-	if !secretCreated && !dryRun {
+	if pendingSecret == nil && !dryRun {
 		warnAboutSecret(ctx, cl, cfg.namespace, p, secretName)
 	}
 
@@ -177,7 +178,25 @@ func runGatewayCreate(ctx context.Context, cfg *kaiConfig, name string, dryRun b
 		return nil
 	}
 
+	// Persist the inline credential Secret only now that creation is confirmed,
+	// so a declined wizard never leaves an orphaned Secret behind.
+	if pendingSecret != nil {
+		if err := createOrUpdateSecret(ctx, cl, cfg.namespace, secretName, pendingSecret); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "secret %q created\n", secretName)
+	}
+
 	if err := cl.Create(ctx, gw); err != nil {
+		// Roll back the Secret we just created so it is not orphaned.
+		if pendingSecret != nil {
+			if delErr := cl.Delete(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: cfg.namespace},
+			}); delErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to clean up Secret %q after Gateway creation failed: %v\n",
+					secretName, delErr)
+			}
+		}
 		return fmt.Errorf("failed to create Gateway: %w", err)
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "gateway %q created\n", name)

@@ -216,7 +216,7 @@ func newWorkflowRunCommand(cfg *kaiConfig) *cobra.Command {
 			if err := rc.resolveHubToken(); err != nil {
 				return err
 			}
-			env, envFrom, err := rc.build(cmd.Flags().Changed("git-secret"))
+			env, envFrom, err := rc.build()
 			if err != nil {
 				return err
 			}
