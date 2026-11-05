@@ -47,6 +47,25 @@ func Clone(ctx context.Context, cred *Credentials, destDir string) (*gogit.Repos
 	return repo, nil
 }
 
+// PushRemoteName is the remote added for Credentials.PushURL.
+const PushRemoteName = "push"
+
+// pushRemote returns the remote pushes go to: origin, or a "push" remote
+// for cred.PushURL (created on first use, never holding credentials).
+func pushRemote(repo *gogit.Repository, cred *Credentials) (string, error) {
+	if cred.PushURL == "" {
+		return "origin", nil
+	}
+	if _, err := repo.Remote(PushRemoteName); err == nil {
+		return PushRemoteName, nil
+	}
+	_, err := repo.CreateRemote(&gogitcfg.RemoteConfig{Name: PushRemoteName, URLs: []string{cred.PushURL}})
+	if err != nil {
+		return "", fmt.Errorf("create %s remote %s: %w", PushRemoteName, cred.PushURL, err)
+	}
+	return PushRemoteName, nil
+}
+
 func StripCredentials(repo *gogit.Repository) error {
 	remote, err := repo.Remote("origin")
 	if err != nil {
@@ -331,9 +350,13 @@ func Push(ctx context.Context, cred *Credentials, repo *gogit.Repository, branch
 
 	refSpec := gogitcfg.RefSpec(fmt.Sprintf("refs/heads/%s:refs/heads/%s", branch, branch))
 
-	err := repo.PushContext(ctx, &gogit.PushOptions{
+	remote, err := pushRemote(repo, cred)
+	if err != nil {
+		return PushSkipped, err
+	}
+	err = repo.PushContext(ctx, &gogit.PushOptions{
 		Auth:       cred.Auth(),
-		RemoteName: "origin",
+		RemoteName: remote,
 		RefSpecs:   []gogitcfg.RefSpec{refSpec},
 	})
 	// Already-up-to-date is a successful push of nothing: the watcher

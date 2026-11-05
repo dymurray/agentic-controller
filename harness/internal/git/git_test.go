@@ -880,3 +880,44 @@ func TestPushAsksTheBranchNotHEAD(t *testing.T) {
 		t.Errorf("Push of a branch still at the base = %s, %v; want skipped, nil", outcome, err)
 	}
 }
+
+// TestPushToPushURL: with PushURL set (a fork the credential can write
+// to), the clone comes from RepoURL but the branch lands on PushURL only.
+func TestPushToPushURL(t *testing.T) {
+	upstreamDir, _ := setupBareRemote(t)
+	seedBareRepo(t, upstreamDir)
+	forkDir := filepath.Join(t.TempDir(), "fork.git")
+	if _, err := gogit.PlainInit(forkDir, true); err != nil {
+		t.Fatalf("init fork: %v", err)
+	}
+	cred := &Credentials{RepoURL: upstreamDir, PushURL: forkDir, Branch: "cve-fix"}
+	if cred.PushTarget() != forkDir {
+		t.Fatalf("PushTarget = %s", cred.PushTarget())
+	}
+
+	ctx := context.Background()
+	cloneDir := filepath.Join(t.TempDir(), "work")
+	repo, err := Clone(ctx, cred, cloneDir)
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	if err := CheckoutBranch(repo, cred.Branch); err != nil {
+		t.Fatalf("CheckoutBranch: %v", err)
+	}
+	baseSHA, _ := HeadSHA(repo)
+	commitFile(t, repo, cloneDir, "fix.go")
+
+	for i := 0; i < 2; i++ { // the second push reuses the push remote
+		if _, err := Push(ctx, cred, repo, cred.Branch, baseSHA); err != nil {
+			t.Fatalf("Push %d: %v", i, err)
+		}
+	}
+	fork, _ := gogit.PlainOpen(forkDir)
+	if _, err := fork.Reference(plumbing.NewBranchReferenceName(cred.Branch), false); err != nil {
+		t.Errorf("branch not on the push URL: %v", err)
+	}
+	upstream, _ := gogit.PlainOpen(upstreamDir)
+	if _, err := upstream.Reference(plumbing.NewBranchReferenceName(cred.Branch), false); err == nil {
+		t.Error("branch was pushed to the clone URL too")
+	}
+}

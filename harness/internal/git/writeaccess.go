@@ -49,19 +49,20 @@ var (
 // rejected the ones given) wraps ErrNoWriteAccess. Every other failure
 // wraps ErrWriteAccessUnknown — see that sentinel.
 func CheckWriteAccess(ctx context.Context, cred *Credentials) error {
-	ep, err := transport.NewEndpoint(cred.RepoURL)
+	target := cred.PushTarget()
+	ep, err := transport.NewEndpoint(target)
 	if err != nil {
-		return fmt.Errorf("%w: endpoint %s: %w", ErrWriteAccessUnknown, cred.RepoURL, err)
+		return fmt.Errorf("%w: endpoint %s: %w", ErrWriteAccessUnknown, target, err)
 	}
 
 	tr, err := client.NewClient(ep)
 	if err != nil {
-		return fmt.Errorf("%w: transport for %s: %w", ErrWriteAccessUnknown, cred.RepoURL, err)
+		return fmt.Errorf("%w: transport for %s: %w", ErrWriteAccessUnknown, target, err)
 	}
 
 	session, err := tr.NewReceivePackSession(ep, cred.Auth())
 	if err != nil {
-		return classifyProbeError(cred.RepoURL, err)
+		return classifyProbeError(target, err)
 	}
 	defer func() { _ = session.Close() }()
 
@@ -69,7 +70,7 @@ func CheckWriteAccess(ctx context.Context, cred *Credentials) error {
 	// that treats a refless advertisement as an error — so accept it.
 	_, err = session.AdvertisedReferencesContext(ctx)
 	if err != nil && !errors.Is(err, transport.ErrEmptyRemoteRepository) {
-		return classifyProbeError(cred.RepoURL, err)
+		return classifyProbeError(target, err)
 	}
 	return nil
 }

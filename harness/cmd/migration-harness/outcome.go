@@ -35,10 +35,10 @@ func gitWriteAccessError(cred *git.Credentials) error {
 		return fmt.Errorf(
 			"%s no write access to %s for branch %s: the application has no source credential "+
 				"(attach a Source Control credential with push access to the application in the Hub)",
-			gitWriteAccessPrefix, cred.RepoURL, cred.Branch)
+			gitWriteAccessPrefix, cred.PushTarget(), cred.Branch)
 	}
 	return fmt.Errorf("%s no write access to %s with credential %q: the token can read but not push",
-		gitWriteAccessPrefix, cred.RepoURL, cred.IdentityName)
+		gitWriteAccessPrefix, cred.PushTarget(), cred.IdentityName)
 }
 
 // outcome is the result of a stage, per the harness exit-code contract

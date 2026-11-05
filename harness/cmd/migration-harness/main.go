@@ -235,7 +235,7 @@ func runStage(cmd *cobra.Command, args []string) (code int, err error) {
 			logging.Warn("git write access pre-flight inconclusive: %s — continuing",
 				red.redact(err.Error()))
 		default:
-			logging.Ok("push access confirmed for %s", creds.RepoURL)
+			logging.Ok("push access confirmed for %s", creds.PushTarget())
 		}
 	} else {
 		logging.Warn("push pre-flight disabled (HARNESS_GIT_WRITE_CHECK=off) — a missing or " +
@@ -854,7 +854,11 @@ func resolveFromHub(cfg *config.Config, hubClient *hub.Client) (*git.Credentials
 
 	creds := &git.Credentials{
 		RepoURL: app.Repository.URL,
+		PushURL: os.Getenv("HARNESS_PUSH_URL"),
 		Branch:  app.Repository.Branch,
+	}
+	if creds.PushURL != "" {
+		logging.Ok("push target: %s (HARNESS_PUSH_URL)", creds.PushURL)
 	}
 	if identity != nil {
 		creds.Username = identity.User
